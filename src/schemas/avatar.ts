@@ -140,8 +140,8 @@ export type PartialUserCosmeticLoadoutInput = z.input<typeof PartialUserCosmetic
 export const CompositingBoundsSchema = z.object({
   x: z.number().finite(),
   y: z.number().finite(),
-  width: z.number().positive(),
-  height: z.number().positive(),
+  width: z.number().finite().positive(),
+  height: z.number().finite().positive(),
 });
 
 export const AssetLayerSchema = z.object({
