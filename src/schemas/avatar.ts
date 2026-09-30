@@ -75,7 +75,7 @@ export const AvatarConfigSchema = z.object({
 // ──────────────────────────────────────────────
 
 export const CritterConfigSchema = z.object({
-  critterId: z.string().min(1).optional(),
+  critterId: z.string().min(1),
   shellId: z.string().min(1).optional(),
   headwearId: z.string().min(1).optional(),
   perchLocation: CritterPerchLocationSchema,
@@ -116,7 +116,7 @@ export const UserCosmeticLoadoutSchema = z.object({
   frameId: z.string().min(1),
   backgroundId: z.string().min(1),
   avatarConfig: AvatarConfigSchema,
-  critterConfig: CritterConfigSchema,
+  critters: z.array(CritterConfigSchema).default([]),
   landscapeConfig: LandscapeConfigSchema,
   renderUrls: RenderUrlsSchema,
 });

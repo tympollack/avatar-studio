@@ -86,10 +86,10 @@ export interface AvatarConfig {
 /** Allowed attachment positions for a critter companion. */
 export type CritterPerchLocation = 'shoulder' | 'pocket' | 'hover' | 'ground';
 
-/** Critter companion attachment configuration. */
+/** Configuration for a single attached critter or companion object. */
 export interface CritterConfig {
-  /** Selected critter asset ID. Omit if no critter equipped. */
-  critterId?: string;
+  /** Critter asset ID. */
+  critterId: string;
 
   /** Optional shell / armor overlay for the critter. */
   shellId?: string;
@@ -169,8 +169,8 @@ export interface UserCosmeticLoadout {
   /** Avatar body, hand-rig, and clothing configuration. */
   avatarConfig: AvatarConfig;
 
-  /** Optional critter companion configuration. */
-  critterConfig: CritterConfig;
+  /** Attached critter / companion object configurations. Empty array if none equipped. */
+  critters: CritterConfig[];
 
   /** Landscape habitat plot configuration. */
   landscapeConfig: LandscapeConfig;
