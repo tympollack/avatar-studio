@@ -26,9 +26,11 @@
     "@digitalcanopy/supabase": "^0.1.0",
     "@digitalcanopy/ui": "^0.1.2",
     "clsx": "^2.1.1",
+    "konva": "^10.7.0",
     "lucide-react": "^0.446.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-konva": "^19.3.0",
     "tailwind-merge": "^2.6.1",
     "zod": "^3.23.8"
   },
