@@ -48,8 +48,16 @@ const CatalogLoader: React.FC = () => {
       }
       if (cancelled || !data) return;
 
-      // Map snake_case DB columns → camelCase CosmeticItem contract
-      const items: CosmeticItem[] = data.map((row) => ({
+      type CatalogRow = {
+        id: string;
+        layer_type: string;
+        name: string;
+        asset_url: string;
+        rarity: string | null;
+        metadata: Record<string, unknown> | null;
+      };
+
+      const items: CosmeticItem[] = (data as CatalogRow[]).map((row) => ({
         id: row.id as string,
         layerType: row.layer_type as CosmeticItem['layerType'],
         name: row.name as string,

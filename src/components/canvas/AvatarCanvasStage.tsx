@@ -23,7 +23,7 @@ import type React from 'react';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Stage, Layer, Image as KonvaImage, Rect, Text, Group } from 'react-konva';
 import type Konva from 'konva';
-import { Filters } from 'konva/lib/Filters';
+import { RGB as RGBFilter } from 'konva/lib/filters/RGB';
 import { useCanvasStore } from '../../store/canvasStore';
 import { CritterAnchorLayer } from './CritterAnchorLayer';
 
@@ -147,7 +147,7 @@ const AssetImageLayer: React.FC<AssetImageLayerProps> = ({
         node.red(rgb.r);
         node.green(rgb.g);
         node.blue(rgb.b);
-        node.filters([Filters.RGB]);
+        node.filters([RGBFilter]);
       }
     } else {
       node.filters([]);
