@@ -7,7 +7,13 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'robots.txt'],
+      includeAssets: [
+        'favicon.ico',
+        'apple-touch-icon.png',
+        'robots.txt',
+        'pwa-192x192.png',
+        'pwa-512x512.png',
+      ],
       manifest: {
         name: 'SunShade Avatar Studio',
         short_name: 'Avatar Studio',
@@ -38,19 +44,9 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-        runtimeCaching: [
-          {
-            urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'supabase-api-cache',
-              expiration: {
-                maxEntries: 50,
-                maxAgeSeconds: 5 * 60, // 5 minutes
-              },
-            },
-          },
-        ],
+        // NOTE: Supabase API responses are intentionally NOT cached by the service worker.
+        // Caching authenticated responses risks replaying one user's data for a different
+        // user after sign-out in a shared-device scenario.
       },
     }),
   ],

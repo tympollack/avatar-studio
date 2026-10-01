@@ -4,9 +4,18 @@
   "private": true,
   "description": "SunShade Avatar Studio — standalone PWA for avatar and habitat customization",
   "type": "module",
+  "main": "./dist/lib/avatar-studio.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/lib/avatar-studio.js",
+      "types": "./dist/types/index.d.ts"
+    }
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:lib": "tsc --project tsconfig.lib.json && vite build --config vite.lib.config.ts",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-vm-modules node_modules/.bin/jest --passWithNoTests",

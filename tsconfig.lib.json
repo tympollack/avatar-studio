@@ -1,0 +1,27 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    /* Library emit mode — overrides noEmit from base config */
+    "noEmit": false,
+    "declaration": true,
+    "declarationDir": "dist/types",
+    "emitDeclarationOnly": true,
+    "outDir": "dist",
+    /* Lib entry doesn't need DOM APIs beyond what zod/react types provide */
+    "moduleResolution": "Bundler"
+  },
+  "include": [
+    "src/types/**/*.ts",
+    "src/schemas/**/*.ts",
+    "src/index.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/main.tsx",
+    "src/App.tsx",
+    "src/components/**",
+    "src/auth/**",
+    "src/styles/**"
+  ]
+}

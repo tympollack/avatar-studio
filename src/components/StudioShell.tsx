@@ -26,9 +26,14 @@ export const StudioShell: React.FC = () => {
           SunShade Avatar Studio
         </span>
         {!session && (
-          <span className="text-sm text-slate-400">
-            Authenticate with Hub to Save
-          </span>
+          <a
+            href="https://hub.sunshade.icu"
+            className="text-sm text-indigo-400 underline-offset-2 hover:underline"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Sign in with Hub to Save
+          </a>
         )}
         {session && (
           <span className="text-sm text-slate-400">
