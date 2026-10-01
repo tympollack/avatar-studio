@@ -21,6 +21,7 @@ export type CosmeticLayerType =
   | 'background'
   | 'avatar_body'
   | 'avatar_hand'
+  | 'avatar_clothing'
   | 'critter'
   | 'landscape';
 

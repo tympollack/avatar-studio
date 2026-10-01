@@ -19,6 +19,7 @@ export const CosmeticLayerTypeSchema = z.enum([
   'background',
   'avatar_body',
   'avatar_hand',
+  'avatar_clothing',
   'critter',
   'landscape',
 ]);
@@ -86,8 +87,8 @@ export const CritterConfigSchema = z.object({
 // ──────────────────────────────────────────────
 
 export const AnchorCoordinatesSchema = z.object({
-  x: z.number().finite(),
-  y: z.number().finite(),
+  x: z.number().finite().min(0).max(1),
+  y: z.number().finite().min(0).max(1),
 });
 
 export const LandscapeConfigSchema = z.object({
