@@ -6,19 +6,24 @@
  * Layer stack (back → front, strict z-order):
  *   1. Background   — day/night ambient environment image
  *   2. Landscape    — isometric terrain anchor / habitat
- *   3. Avatar       — silhouette → clothing → hand-rig composite
+ *   3. Avatar       — silhouette → clothing → hand-rig composite (translated by anchor offset)
  *   4. Critter      — companion(s) at perch coordinates (CritterAnchorLayer)
  *   5. Frame HUD    — glassmorphic rarity border overlay
  *
  * Canvas is 1024×1024 virtual, auto-scaled to the smallest viewport dimension
  * while maintaining 1:1 aspect ratio. Supports pinch-zoom and pan for detail
  * inspection (headwear, hand rigs). Targets ≥60 FPS asset swaps via React-Konva.
+ *
+ * Anchor offset fix (Devin BUG_0004):
+ *   The avatar layers and critter layer both receive the same anchor offset
+ *   so companions remain locked to their perch sockets regardless of landscape.
  */
 
 import type React from 'react';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Stage, Layer, Image as KonvaImage, Rect, Text } from 'react-konva';
+import { Stage, Layer, Image as KonvaImage, Rect, Text, Group } from 'react-konva';
 import type Konva from 'konva';
+import { Filters } from 'konva/lib/Filters';
 import { useCanvasStore } from '../../store/canvasStore';
 import { CritterAnchorLayer } from './CritterAnchorLayer';
 
@@ -27,13 +32,23 @@ import { CritterAnchorLayer } from './CritterAnchorLayer';
 // ──────────────────────────────────────────────
 
 const VIRTUAL_SIZE = 1024;
-
-/** Minimum zoom level (1 = original, 0.5 = zoomed out 50%). */
 const ZOOM_MIN = 0.5;
-/** Maximum zoom level. */
 const ZOOM_MAX = 5.0;
-/** Zoom step per wheel tick. */
 const ZOOM_STEP = 0.1;
+
+// ──────────────────────────────────────────────
+// Hex colour → Konva RGBA filter values
+// ──────────────────────────────────────────────
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const result = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+  if (!result) return null;
+  return {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16),
+  };
+}
 
 // ──────────────────────────────────────────────
 // Image preload hook
@@ -93,7 +108,7 @@ const PlaceholderLayer: React.FC<PlaceholderLayerProps> = ({
 );
 
 // ──────────────────────────────────────────────
-// Full-size image layer
+// Full-size image layer (with optional RGBA tint)
 // ──────────────────────────────────────────────
 
 interface AssetImageLayerProps {
@@ -101,7 +116,11 @@ interface AssetImageLayerProps {
   placeholderLabel: string;
   placeholderFill: string;
   size: number;
-  /** Optional CSS filter tint applied via Konva cache (hex string). */
+  /**
+   * Hex tint color (e.g. "#DC2626"). When provided, applies a Konva RGBA
+   * colour-replacement filter to the image pixels. Requires cache() to be
+   * called on the Konva node whenever the tint changes.
+   */
   tintColor?: string;
   opacity?: number;
 }
@@ -111,9 +130,32 @@ const AssetImageLayer: React.FC<AssetImageLayerProps> = ({
   placeholderLabel,
   placeholderFill,
   size,
+  tintColor,
   opacity = 1,
 }) => {
   const img = useImage(assetUrl);
+  const nodeRef = useRef<Konva.Image>(null);
+
+  // Apply/remove RGBA tint filter whenever tintColor or image changes.
+  useEffect(() => {
+    const node = nodeRef.current;
+    if (!node || !img) return;
+
+    if (tintColor) {
+      const rgb = hexToRgb(tintColor);
+      if (rgb) {
+        node.red(rgb.r);
+        node.green(rgb.g);
+        node.blue(rgb.b);
+        node.filters([Filters.RGB]);
+      }
+    } else {
+      node.filters([]);
+    }
+    // cache() is required for Konva filters to work
+    node.cache();
+    node.getLayer()?.batchDraw();
+  }, [tintColor, img]);
 
   if (!img) {
     return (
@@ -127,6 +169,7 @@ const AssetImageLayer: React.FC<AssetImageLayerProps> = ({
 
   return (
     <KonvaImage
+      ref={nodeRef}
       image={img}
       x={0}
       y={0}
@@ -165,7 +208,6 @@ export const AvatarCanvasStage: React.FC = () => {
     return () => observer.disconnect();
   }, []);
 
-  // Scale factor: maps virtual 1024px coords → actual canvas pixels.
   const scale = canvasSize / VIRTUAL_SIZE;
 
   // ── Zoom + Pan state ───────────────────────
@@ -183,19 +225,15 @@ export const AvatarCanvasStage: React.FC = () => {
 
     const direction = e.evt.deltaY < 0 ? 1 : -1;
     const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, oldZoom + direction * ZOOM_STEP));
-
     const mousePointTo = {
       x: (pointer.x - stage.x()) / oldZoom,
       y: (pointer.y - stage.y()) / oldZoom,
     };
-
-    const newPos = {
+    setZoom(newZoom);
+    setPanOffset({
       x: pointer.x - mousePointTo.x * newZoom,
       y: pointer.y - mousePointTo.y * newZoom,
-    };
-
-    setZoom(newZoom);
-    setPanOffset(newPos);
+    });
   }, []);
 
   // ── Asset URL resolution ───────────────────
@@ -211,6 +249,17 @@ export const AvatarCanvasStage: React.FC = () => {
     ? catalogIndex[avatarConfig.handRigId]
     : undefined;
   const landscapeItem = catalogIndex[landscapeConfig.landscapeId];
+
+  /**
+   * Avatar + critter anchor offset in pixels.
+   * Translates the avatar group by the same delta used by CritterAnchorLayer
+   * so companions stay locked to their perch sockets on any landscape anchor.
+   * (Fixes Devin BUG_0004: critters detaching from avatar on non-center anchors.)
+   */
+  const anchorOffsetPx = {
+    x: (landscapeConfig.anchorCoordinates.x - 0.5) * canvasSize,
+    y: (landscapeConfig.anchorCoordinates.y - 0.75) * canvasSize,
+  };
 
   return (
     <div
@@ -249,34 +298,36 @@ export const AvatarCanvasStage: React.FC = () => {
           />
         </Layer>
 
-        {/* ── Layer 3: Avatar (silhouette → clothing → hand-rig) ── */}
+        {/* ── Layer 3: Avatar translated by anchor offset ── */}
         <Layer name="avatar">
-          {/* Silhouette base */}
-          <AssetImageLayer
-            assetUrl={silhouetteItem?.assetUrl}
-            placeholderLabel="Avatar Silhouette"
-            placeholderFill="#334155"
-            size={canvasSize}
-            tintColor={avatarConfig.tintColor}
-          />
-          {/* Clothing overlay */}
-          {clothingItem && (
+          <Group x={anchorOffsetPx.x} y={anchorOffsetPx.y}>
+            {/* Silhouette base — tinted via Konva RGBA filter */}
             <AssetImageLayer
-              assetUrl={clothingItem.assetUrl}
-              placeholderLabel="Clothing"
-              placeholderFill="#475569"
+              assetUrl={silhouetteItem?.assetUrl}
+              placeholderLabel="Avatar Silhouette"
+              placeholderFill="#334155"
               size={canvasSize}
+              tintColor={avatarConfig.tintColor}
             />
-          )}
-          {/* Hand-rig overlay */}
-          {handRigItem && (
-            <AssetImageLayer
-              assetUrl={handRigItem.assetUrl}
-              placeholderLabel="Hand Rig"
-              placeholderFill="#64748b"
-              size={canvasSize}
-            />
-          )}
+            {/* Clothing overlay */}
+            {clothingItem && (
+              <AssetImageLayer
+                assetUrl={clothingItem.assetUrl}
+                placeholderLabel="Clothing"
+                placeholderFill="#475569"
+                size={canvasSize}
+              />
+            )}
+            {/* Hand-rig overlay */}
+            {handRigItem && (
+              <AssetImageLayer
+                assetUrl={handRigItem.assetUrl}
+                placeholderLabel="Hand Rig"
+                placeholderFill="#64748b"
+                size={canvasSize}
+              />
+            )}
+          </Group>
         </Layer>
 
         {/* ── Layer 4: Critter companions (anchor-coordinated) ── */}

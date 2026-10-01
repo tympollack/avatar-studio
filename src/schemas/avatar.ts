@@ -19,6 +19,7 @@ export const CosmeticLayerTypeSchema = z.enum([
   'background',
   'avatar_body',
   'avatar_hand',
+  'avatar_clothing',
   'critter',
   'landscape',
 ]);

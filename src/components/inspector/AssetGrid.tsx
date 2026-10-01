@@ -1,7 +1,7 @@
 /**
  * @module components/inspector/AssetGrid
  *
- * Virtualized (windowed) asset selector grid.
+ * Asset selector grid for the inspector drawer.
  *
  * Renders a scrollable grid of thumbnail cards. Each card shows:
  *   - Thumbnail image (or letter placeholder if no assetUrl)
@@ -9,9 +9,16 @@
  *   - Rarity-colored border ring
  *   - Active checkmark overlay when selected
  *
- * Performance: uses CSS `content-visibility: auto` on rows to approximate
- * virtual scrolling without adding a heavy windowing library dependency.
- * For catalogs exceeding ~200 items, swap in react-window or tanstack-virtual.
+ * Selection state: each card's selected state is determined by the
+ * `getIsSelected` callback, which the parent computes per-item based on
+ * layer type (e.g. body cards compare against silhouetteId, hand-rig cards
+ * against handRigId). This avoids the single-selectedId bug where hand-rig
+ * selections never showed a checkmark.
+ *
+ * Performance note: `contentVisibility: auto` is a CSS rendering hint that
+ * allows the browser to skip paint/layout for off-screen grid rows. It is NOT
+ * JavaScript window-based virtualization — for catalogs > ~300 items, replace
+ * with @tanstack/react-virtual or react-window for true DOM windowing.
  */
 
 import type React from 'react';
@@ -113,11 +120,17 @@ const AssetCard: React.FC<AssetCardProps> = ({ item, isSelected, onSelect }) => 
 
 interface AssetGridProps {
   items: CosmeticItem[];
-  selectedId: string | undefined;
+  /**
+   * Per-item selection predicate. Called for each card to determine whether
+   * it should show the active checkmark. Replaces the single `selectedId`
+   * prop so that mixed-layer grids (e.g. Avatar: body + hand-rig + clothing)
+   * can independently track selection per layer type.
+   */
+  getIsSelected: (item: CosmeticItem) => boolean;
   onSelect: (id: string) => void;
 }
 
-export const AssetGrid: React.FC<AssetGridProps> = ({ items, selectedId, onSelect }) => {
+export const AssetGrid: React.FC<AssetGridProps> = ({ items, getIsSelected, onSelect }) => {
   if (items.length === 0) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 py-12 text-slate-500">
@@ -147,15 +160,18 @@ export const AssetGrid: React.FC<AssetGridProps> = ({ items, selectedId, onSelec
       role="listbox"
       aria-label="Asset selector"
     >
-      {items.map((item) => (
-        <div key={item.id} role="option" aria-selected={item.id === selectedId}>
-          <AssetCard
-            item={item}
-            isSelected={item.id === selectedId}
-            onSelect={onSelect}
-          />
-        </div>
-      ))}
+      {items.map((item) => {
+        const isSelected = getIsSelected(item);
+        return (
+          <div key={item.id} role="option" aria-selected={isSelected}>
+            <AssetCard
+              item={item}
+              isSelected={isSelected}
+              onSelect={onSelect}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 };
