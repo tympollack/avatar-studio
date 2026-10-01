@@ -63,6 +63,7 @@ interface AnimatedCritterProps {
   anchorOffset: NormalizedCoord;
   canvasSize: number;
   scale: number;
+  perchCollisionOffset?: number;
 }
 
 const AnimatedCritter: React.FC<AnimatedCritterProps> = ({
@@ -71,6 +72,7 @@ const AnimatedCritter: React.FC<AnimatedCritterProps> = ({
   anchorOffset,
   canvasSize,
   scale,
+  perchCollisionOffset = 0,
 }) => {
   const item = catalogIndex[critter.critterId];
   const img = useCritterImage(item?.assetUrl);
@@ -95,6 +97,7 @@ const AnimatedCritter: React.FC<AnimatedCritterProps> = ({
   const clamped = clampNormalized(anchorOffset);
   const pixel = resolvePerchPixel(critter.perchLocation, clamped, canvasSize);
   const critterSize = CRITTER_SIZE_FRAC * canvasSize;
+  const collisionShiftX = perchCollisionOffset * (critterSize * 0.4);
 
   if (!img) {
     // Render nothing for unresolved assets — zero fake data / placeholders.
@@ -102,7 +105,7 @@ const AnimatedCritter: React.FC<AnimatedCritterProps> = ({
   }
 
   return (
-    <Group x={pixel.x - critterSize / 2} y={pixel.y - critterSize / 2 + bobY}>
+    <Group x={pixel.x - critterSize / 2 + collisionShiftX} y={pixel.y - critterSize / 2 + bobY}>
       <KonvaImage
         image={img}
         width={critterSize}
@@ -138,16 +141,23 @@ export const CritterAnchorLayer: React.FC<CritterAnchorLayerProps> = ({
 
   return (
     <Layer name="critter-anchors">
-      {critters.map((critter, idx) => (
-        <AnimatedCritter
-          key={`${critter.critterId}-${idx}`}
-          critter={critter}
-          catalogIndex={catalogIndex}
-          anchorOffset={anchorOffset}
-          canvasSize={canvasSize}
-          scale={scale}
-        />
-      ))}
+      {critters.map((critter, idx) => {
+        const samePerchPrior = critters
+          .slice(0, idx)
+          .filter((c) => c.perchLocation === critter.perchLocation).length;
+
+        return (
+          <AnimatedCritter
+            key={`${critter.critterId}-${idx}`}
+            critter={critter}
+            catalogIndex={catalogIndex}
+            anchorOffset={anchorOffset}
+            canvasSize={canvasSize}
+            scale={scale}
+            perchCollisionOffset={samePerchPrior}
+          />
+        );
+      })}
     </Layer>
   );
 };

@@ -26,6 +26,7 @@ import type Konva from 'konva';
 import { RGB as RGBFilter } from 'konva/lib/filters/RGB';
 import { useCanvasStore } from '../../store/canvasStore';
 import { CritterAnchorLayer } from './CritterAnchorLayer';
+import { clampNormalized } from '../../utils/coordinateMath';
 
 // ──────────────────────────────────────────────
 // Virtual canvas constants
@@ -136,7 +137,9 @@ const AssetImageLayer: React.FC<AssetImageLayerProps> = ({
   const img = useImage(assetUrl);
   const nodeRef = useRef<Konva.Image>(null);
 
-  // Apply/remove RGBA tint filter whenever tintColor or image changes.
+  // Apply/remove RGBA tint filter whenever tintColor, image, or canvas size changes.
+  // Re-creates node cache when tinted, or clears cache when untinted so resized images
+  // never render stale cached bitmap bounds. (Fixes Devin BUG_0004.)
   useEffect(() => {
     const node = nodeRef.current;
     if (!node || !img) return;
@@ -148,14 +151,22 @@ const AssetImageLayer: React.FC<AssetImageLayerProps> = ({
         node.green(rgb.g);
         node.blue(rgb.b);
         node.filters([RGBFilter]);
+        // cache() is required for Konva filters to work.
+        // Clear previous cache first so new dimensions are re-cached accurately.
+        node.clearCache();
+        node.cache();
       }
     } else {
+      // Untinted images do not require caching; clear any cached raster buffer
       node.filters([]);
+      node.clearCache();
     }
-    // cache() is required for Konva filters to work
-    node.cache();
     node.getLayer()?.batchDraw();
-  }, [tintColor, img]);
+
+    return () => {
+      node?.clearCache();
+    };
+  }, [tintColor, img, size]);
 
   if (!img) {
     return (
@@ -254,11 +265,12 @@ export const AvatarCanvasStage: React.FC = () => {
    * Avatar + critter anchor offset in pixels.
    * Translates the avatar group by the same delta used by CritterAnchorLayer
    * so companions stay locked to their perch sockets on any landscape anchor.
-   * (Fixes Devin BUG_0004: critters detaching from avatar on non-center anchors.)
+   * Clamps normalized coordinates to [0, 1] identically to CritterAnchorLayer (Fixes Devin BUG_0006).
    */
+  const clampedAnchor = clampNormalized(landscapeConfig.anchorCoordinates);
   const anchorOffsetPx = {
-    x: (landscapeConfig.anchorCoordinates.x - 0.5) * canvasSize,
-    y: (landscapeConfig.anchorCoordinates.y - 0.75) * canvasSize,
+    x: (clampedAnchor.x - 0.5) * canvasSize,
+    y: (clampedAnchor.y - 0.75) * canvasSize,
   };
 
   return (
