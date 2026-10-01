@@ -12,13 +12,15 @@
     "test": "node --experimental-vm-modules node_modules/.bin/jest --passWithNoTests"
   },
   "dependencies": {
+    "konva": "^10.7.0",
+    "react-konva": "^19.3.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "typescript": "^5.6.3",
+    "@jest/globals": "^29.7.0",
     "@types/node": "^22.7.0",
     "jest": "^29.7.0",
-    "@jest/globals": "^29.7.0",
-    "ts-jest": "^29.2.5"
+    "ts-jest": "^29.2.5",
+    "typescript": "^5.6.3"
   }
 }
