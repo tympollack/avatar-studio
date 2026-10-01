@@ -14,6 +14,7 @@ import type {
   LandscapeTheme,
   CosmeticItem,
 } from '../types/avatar';
+import { clampNormalized } from '../utils/coordinateMath';
 
 // ──────────────────────────────────────────────
 // State Shape
@@ -64,6 +65,8 @@ export type CanvasAction =
   | { type: 'SET_CRITTERS'; critters: CritterConfig[] }
   | { type: 'SET_LANDSCAPE'; config: Partial<LandscapeConfig> }
   | { type: 'SET_CATALOG'; items: CosmeticItem[] }
+  | { type: 'LOAD_SAVED_LOADOUT'; loadout: Partial<CanvasState> }
+  | { type: 'RESET_LOADOUT' }
   | { type: 'MARK_CLEAN' };
 
 export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasState {
@@ -87,12 +90,20 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
       };
     case 'SET_CRITTERS':
       return { ...state, critters: action.critters, isDirty: true };
-    case 'SET_LANDSCAPE':
+    case 'SET_LANDSCAPE': {
+      const nextLandscape: LandscapeConfig = {
+        ...state.landscapeConfig,
+        ...action.config,
+      };
+      if (action.config.anchorCoordinates) {
+        nextLandscape.anchorCoordinates = clampNormalized(action.config.anchorCoordinates);
+      }
       return {
         ...state,
-        landscapeConfig: { ...state.landscapeConfig, ...action.config },
+        landscapeConfig: nextLandscape,
         isDirty: true,
       };
+    }
     case 'SET_CATALOG': {
       const catalogIndex: Record<string, CosmeticItem> = {};
       for (const item of action.items) {
@@ -100,6 +111,34 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
       }
       return { ...state, catalogIndex };
     }
+    case 'LOAD_SAVED_LOADOUT':
+      return {
+        ...state,
+        frameId: action.loadout.frameId ?? '',
+        backgroundId: action.loadout.backgroundId ?? '',
+        backgroundTheme: action.loadout.backgroundTheme ?? 'day',
+        avatarConfig: action.loadout.avatarConfig ?? { silhouetteId: '' },
+        critters: action.loadout.critters ?? [],
+        landscapeConfig: action.loadout.landscapeConfig
+          ? {
+              ...action.loadout.landscapeConfig,
+              anchorCoordinates: clampNormalized(
+                action.loadout.landscapeConfig.anchorCoordinates ?? { x: 0.5, y: 0.75 },
+              ),
+            }
+          : {
+              landscapeId: '',
+              anchorCoordinates: { x: 0.5, y: 0.75 },
+              theme: 'day',
+            },
+        isDirty: false,
+      };
+    case 'RESET_LOADOUT':
+      return {
+        ...defaultCanvasState,
+        catalogIndex: state.catalogIndex,
+        isDirty: false,
+      };
     case 'MARK_CLEAN':
       return { ...state, isDirty: false };
     default:

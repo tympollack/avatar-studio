@@ -26,7 +26,7 @@ import { INSPECTOR_TABS, useInspectorTabs } from './useInspectorTabs';
 import type { InspectorTab } from './useInspectorTabs';
 import { AssetGrid } from './AssetGrid';
 import { TintPicker } from './TintPicker';
-import type { CosmeticItem, CosmeticLayerType } from '../../types/avatar';
+import type { CosmeticItem, CosmeticLayerType, CritterPerchLocation } from '../../types/avatar';
 
 // ──────────────────────────────────────────────
 // Tab → layer type mapping
@@ -180,13 +180,32 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
             critters: state.critters.filter((c) => c.critterId !== id),
           });
         } else {
-          dispatch({
-            type: 'SET_CRITTERS',
-            critters: [
-              ...state.critters,
-              { critterId: id, perchLocation: 'shoulder' },
-            ],
-          });
+          // Assign next available perch socket, preventing companions from overlapping.
+          // (Fixes Devin BUG_0005.)
+          const ALL_PERCHES: CritterPerchLocation[] = ['shoulder', 'hover', 'ground', 'pocket'];
+          const occupied = new Set(state.critters.map((c) => c.perchLocation));
+          const availablePerch = ALL_PERCHES.find((p) => !occupied.has(p));
+
+          if (availablePerch) {
+            dispatch({
+              type: 'SET_CRITTERS',
+              critters: [
+                ...state.critters,
+                { critterId: id, perchLocation: availablePerch },
+              ],
+            });
+          } else {
+            // All perch locations occupied: replace the last equipped companion
+            // using its perch location so all companions stay on distinct sockets.
+            const lastPerch = state.critters[state.critters.length - 1].perchLocation;
+            dispatch({
+              type: 'SET_CRITTERS',
+              critters: [
+                ...state.critters.slice(0, -1),
+                { critterId: id, perchLocation: lastPerch },
+              ],
+            });
+          }
         }
         break;
       }
@@ -200,6 +219,32 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
   const handleTintChange = useCallback((hex: string | undefined) => {
     dispatch({ type: 'SET_AVATAR_CONFIG', config: { tintColor: hex } });
   }, [dispatch]);
+
+  /**
+   * Updates an equipped companion's perch socket. If another companion already
+   * occupies that socket, their locations are swapped so all companions remain
+   * on distinct sockets without overlapping.
+   */
+  const handlePerchChange = useCallback((critterId: string, nextPerch: CritterPerchLocation) => {
+    const current = state.critters.find((c) => c.critterId === critterId);
+    if (!current || current.perchLocation === nextPerch) return;
+
+    const otherWithPerch = state.critters.find(
+      (c) => c.critterId !== critterId && c.perchLocation === nextPerch,
+    );
+
+    const updated = state.critters.map((c) => {
+      if (c.critterId === critterId) {
+        return { ...c, perchLocation: nextPerch };
+      }
+      if (otherWithPerch && c.critterId === otherWithPerch.critterId) {
+        return { ...c, perchLocation: current.perchLocation };
+      }
+      return c;
+    });
+
+    dispatch({ type: 'SET_CRITTERS', critters: updated });
+  }, [state.critters, dispatch]);
 
   /**
    * Per-item selection predicate passed to AssetGrid.
@@ -227,18 +272,22 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
 
   /**
    * Save handler — awaits onSave resolution before marking state clean.
-   * If onSave is not provided (persistence not yet wired), the button is
-   * still shown but only logs; state is NOT marked clean so the user keeps
-   * their dirty reminder. (Fixes Devin BUG_0002.)
+   * If onSave is not provided (e.g. guest mode), state is NOT marked clean
+   * so users keep their dirty reminder. (Fixes Devin BUG_0001.)
    */
   const handleSave = useCallback(async () => {
+    if (!onSave) {
+      console.warn('[InspectorDrawer] onSave is not provided; skipping save');
+      return;
+    }
     setIsSaving(true);
     try {
-      await onSave?.();
+      await onSave();
       // Only mark clean after a successful save
       dispatch({ type: 'MARK_CLEAN' });
-    } catch {
+    } catch (err) {
       // Save failed — keep isDirty true so the user knows to retry
+      console.error('[InspectorDrawer] Save failed:', err);
     } finally {
       setIsSaving(false);
     }
@@ -291,6 +340,50 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
                 onChange={handleTintChange}
                 label="Avatar Tint"
               />
+            </div>
+          )}
+
+          {activeTab === 'Companion' && state.critters.length > 0 && (
+            <div className="mt-4 border-t border-slate-700 pt-4 px-3">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                Equipped Companions &amp; Perch Sockets
+              </h4>
+              <div className="flex flex-col gap-2">
+                {state.critters.map((critter) => {
+                  const item = state.catalogIndex[critter.critterId];
+                  return (
+                    <div
+                      key={critter.critterId}
+                      className="flex items-center justify-between rounded-md bg-slate-800/80 px-2.5 py-1.5 border border-slate-700/60 text-xs"
+                    >
+                      <span className="font-medium text-slate-200 truncate max-w-[120px]">
+                        {item?.name ?? 'Companion'}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <label htmlFor={`perch-${critter.critterId}`} className="sr-only">
+                          Perch position
+                        </label>
+                        <select
+                          id={`perch-${critter.critterId}`}
+                          value={critter.perchLocation}
+                          onChange={(e) =>
+                            handlePerchChange(
+                              critter.critterId,
+                              e.target.value as CritterPerchLocation,
+                            )
+                          }
+                          className="rounded bg-slate-900 border border-slate-700 text-xs text-indigo-300 px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        >
+                          <option value="shoulder">Shoulder</option>
+                          <option value="hover">Hover</option>
+                          <option value="ground">Ground</option>
+                          <option value="pocket">Pocket</option>
+                        </select>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>

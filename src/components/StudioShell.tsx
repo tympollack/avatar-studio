@@ -5,21 +5,25 @@
  *
  * Responsibilities:
  *   1. Waits for AuthProvider session resolution.
- *   2. Fetches the cosmetic catalog from Supabase and dispatches SET_CATALOG
- *      so the inspector drawer has items to display. (Fixes Devin BUG_0001.)
- *   3. Mounts CanvasProvider → AvatarCanvasStage + InspectorDrawer.
- *   4. onSave returns a Promise — MARK_CLEAN only fires after successful save.
+ *   2. Fetches the cosmetic catalog from Supabase and dispatches SET_CATALOG.
+ *   3. Loads the session user's persisted loadout into the canvas state after auth,
+ *      and resets loadout on sign-out (Fixes Devin BUG_0002).
+ *   4. Persists the active loadout to hub.user_cosmetic_loadouts on Save when authenticated;
+ *      in guest mode, onSave is omitted so unsaved loadouts retain their dirty reminder
+ *      (Fixes Devin BUG_0001).
+ *   5. Mounts CanvasProvider → AvatarCanvasStage + InspectorDrawer.
  */
 
 import type React from 'react';
 import { useState, useEffect } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import { useAuth } from '../auth/AuthProvider';
 import { supabase } from '@digitalcanopy/supabase';
 import { CanvasProvider } from '../store/CanvasProvider';
 import { useCanvasStore } from '../store/canvasStore';
 import { AvatarCanvasStage } from './canvas/AvatarCanvasStage';
 import { InspectorDrawer } from './inspector/InspectorDrawer';
-import type { CosmeticItem } from '../types/avatar';
+import type { CosmeticItem, UserCosmeticLoadout } from '../types/avatar';
 
 // ──────────────────────────────────────────────
 // Catalog loader (inner — needs CanvasProvider in tree)
@@ -27,10 +31,12 @@ import type { CosmeticItem } from '../types/avatar';
 
 /**
  * CatalogLoader lives inside CanvasProvider so it can dispatch SET_CATALOG.
- * It fetches all cosmetic_items from the hub schema on mount and re-fetches
- * whenever the session changes (in case catalog is user-gated in the future).
+ * It fetches all cosmetic_items from the hub schema. Catalog items are public
+ * per the hub.cosmetic_items_public_read RLS policy; tracking session user ID
+ * ensures any session change re-runs the fetch lifecycle if catalog visibility
+ * becomes user-gated in the future (Devin ANALYSIS_0001).
  */
-const CatalogLoader: React.FC = () => {
+const CatalogLoader: React.FC<{ userId?: string }> = ({ userId }) => {
   const { dispatch } = useCanvasStore();
 
   useEffect(() => {
@@ -70,44 +76,117 @@ const CatalogLoader: React.FC = () => {
     }
 
     void fetchCatalog();
-    return () => { cancelled = true; };
-  }, [dispatch]);
+    return () => {
+      cancelled = true;
+    };
+  }, [dispatch, userId]);
 
-  // This component renders nothing — it's a side-effect-only data fetcher.
   return null;
 };
 
 // ──────────────────────────────────────────────
-// StudioShell
+// StudioEditor (inner — needs CanvasProvider in tree)
 // ──────────────────────────────────────────────
 
-export const StudioShell: React.FC = () => {
-  const { session, loading } = useAuth();
+interface StudioEditorProps {
+  session: Session | null;
+}
+
+const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
+  const { state, dispatch } = useCanvasStore();
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
 
-  if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center bg-slate-900">
-        <div className="h-10 w-10 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" />
-      </div>
-    );
-  }
+  // Load authenticated user's persisted loadout on sign-in, reset on sign-out (Devin BUG_0002)
+  useEffect(() => {
+    if (!session?.user?.id) {
+      dispatch({ type: 'RESET_LOADOUT' });
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadUserLoadout() {
+      const { data, error } = await supabase
+        .schema('hub')
+        .from('user_cosmetic_loadouts')
+        .select('loadout')
+        .eq('user_id', session!.user.id)
+        .maybeSingle();
+
+      if (error) {
+        console.error('[StudioEditor] Failed to load saved cosmetic loadout:', error.message);
+        return;
+      }
+      if (cancelled || !data?.loadout) return;
+
+      const raw = data.loadout as Partial<UserCosmeticLoadout>;
+      if (typeof raw === 'object' && raw !== null && Object.keys(raw).length > 0) {
+        dispatch({
+          type: 'LOAD_SAVED_LOADOUT',
+          loadout: {
+            frameId: typeof raw.frameId === 'string' ? raw.frameId : '',
+            backgroundId: typeof raw.backgroundId === 'string' ? raw.backgroundId : '',
+            backgroundTheme: raw.landscapeConfig?.theme ?? 'day',
+            avatarConfig: raw.avatarConfig ?? { silhouetteId: '' },
+            critters: Array.isArray(raw.critters) ? raw.critters : [],
+            landscapeConfig: raw.landscapeConfig ?? {
+              landscapeId: '',
+              anchorCoordinates: { x: 0.5, y: 0.75 },
+              theme: 'day',
+            },
+          },
+        });
+      }
+    }
+
+    void loadUserLoadout();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id, dispatch]);
 
   /**
-   * onSave — returns a Promise so InspectorDrawer can await it before
-   * dispatching MARK_CLEAN. Phase 4 will replace the console.info with
-   * an actual pre-render worker invocation.
+   * Save handler:
+   * Only provided when user is authenticated. In guest mode, onSave is undefined
+   * so clicking save does not mark the editor clean (Devin BUG_0001).
+   * Awaits Supabase upsert and checks error before resolving.
    */
-  const handleSave = async () => {
-    // TODO Phase 4: await headless pre-render worker + Supabase loadout upsert
-    console.info('[StudioShell] Save & Pre-Render triggered — Phase 4 will wire the worker');
-    // Intentionally not throwing so MARK_CLEAN fires after this resolves.
-  };
+  const handleSave = session
+    ? async () => {
+        const loadoutPayload = {
+          userId: session.user.id,
+          frameId: state.frameId,
+          backgroundId: state.backgroundId,
+          avatarConfig: state.avatarConfig,
+          critters: state.critters,
+          landscapeConfig: state.landscapeConfig,
+          renderUrls: {
+            chip: '',
+            profile: '',
+            landscape: '',
+            version: Date.now(),
+          },
+        };
+
+        const { error } = await supabase
+          .schema('hub')
+          .from('user_cosmetic_loadouts')
+          .upsert({
+            user_id: session.user.id,
+            loadout: loadoutPayload,
+            updated_at: new Date().toISOString(),
+          });
+
+        if (error) {
+          console.error('[StudioEditor] Failed to persist cosmetic loadout:', error.message);
+          throw error;
+        }
+      }
+    : undefined;
 
   return (
-    <CanvasProvider>
-      {/* Catalog fetch side-effect — must be inside CanvasProvider */}
-      <CatalogLoader />
+    <>
+      <CatalogLoader userId={session?.user?.id} />
 
       <div className="flex h-full flex-col bg-slate-900">
         {/* Top nav */}
@@ -171,6 +250,28 @@ export const StudioShell: React.FC = () => {
           />
         </div>
       </div>
+    </>
+  );
+};
+
+// ──────────────────────────────────────────────
+// StudioShell (root provider wrapper)
+// ──────────────────────────────────────────────
+
+export const StudioShell: React.FC = () => {
+  const { session, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="flex h-full items-center justify-center bg-slate-900">
+        <div className="h-10 w-10 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" />
+      </div>
+    );
+  }
+
+  return (
+    <CanvasProvider>
+      <StudioEditor session={session} />
     </CanvasProvider>
   );
 };
