@@ -20,8 +20,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --passWithNoTests",
-    "deploy:staging": "wrangler pages deploy dist --env staging",
-    "deploy:production": "wrangler pages deploy dist --env production"
+    "deploy:staging": "wrangler pages deploy dist --project-name=avatar-studio --branch=staging",
+    "deploy:production": "wrangler pages deploy dist --project-name=avatar-studio --branch=main"
   },
   "dependencies": {
     "@digitalcanopy/supabase": "^0.1.0",
