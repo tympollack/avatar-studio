@@ -31,7 +31,7 @@
     "lucide-react": "^0.446.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-konva": "^19.3.0",
+    "react-konva": "^18.2.16",
     "tailwind-merge": "^2.6.1",
     "zod": "^3.23.8"
   },
