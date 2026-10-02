@@ -5,6 +5,8 @@ import {
   getCombinedCookieValue,
   createChunks,
   createCookieStorage,
+  selectFresherCookieValue,
+  getSessionFreshness,
   BASE64_PREFIX,
   MAX_CHUNK_SIZE,
   SSO_DOMAIN,
@@ -82,6 +84,22 @@ describe('cookieStorage', () => {
     });
   });
 
+  describe('Session Freshness & Duplicate Resolution', () => {
+    it('identifies session freshness from expires_at', () => {
+      const sessionOld = JSON.stringify({ access_token: 'old', expires_at: 1000 });
+      const sessionNew = JSON.stringify({ access_token: 'new', expires_at: 2000 });
+      const encodedOld = `${BASE64_PREFIX}${stringToBase64URL(sessionOld)}`;
+      const encodedNew = `${BASE64_PREFIX}${stringToBase64URL(sessionNew)}`;
+
+      expect(getSessionFreshness(encodedOld)).toBe(1000);
+      expect(getSessionFreshness(encodedNew)).toBe(2000);
+
+      // Selects newer session regardless of argument order
+      expect(selectFresherCookieValue(encodedOld, encodedNew)).toBe(encodedNew);
+      expect(selectFresherCookieValue(encodedNew, encodedOld)).toBe(encodedNew);
+    });
+  });
+
   describe('Scoped cookie jar mock (host-only vs domain-scoped)', () => {
     interface CookieJarEntry {
       name: string;
@@ -91,9 +109,11 @@ describe('cookieStorage', () => {
     }
 
     let cookieJar: CookieJarEntry[] = [];
+    let emitReversedOrder = false;
 
     beforeEach(() => {
       cookieJar = [];
+      emitReversedOrder = false;
 
       (global as any).window = {
         location: {
@@ -105,7 +125,6 @@ describe('cookieStorage', () => {
       (global as any).document = {
         get cookie(): string {
           const currentHost = window.location.hostname.toLowerCase();
-          // Find all cookies matching currentHost (host-only or matching domain)
           const visible = cookieJar.filter((entry) => {
             if (!entry.domain) {
               return entry.name && currentHost === 'avatar.sunshade.icu';
@@ -114,7 +133,8 @@ describe('cookieStorage', () => {
             return currentHost === cleanDomain || currentHost.endsWith('.' + cleanDomain);
           });
 
-          return visible.map((e) => `${e.name}=${encodeURIComponent(e.value)}`).join('; ');
+          const entriesToEmit = emitReversedOrder ? [...visible].reverse() : visible;
+          return entriesToEmit.map((e) => `${e.name}=${encodeURIComponent(e.value)}`).join('; ');
         },
 
         set cookie(rawCookieString: string) {
@@ -173,6 +193,7 @@ describe('cookieStorage', () => {
       const sessionPayload = {
         access_token: 'hub_access_token_xyz',
         refresh_token: 'hub_refresh_token_abc',
+        expires_at: 2000,
         user: { id: 'usr_123', email: 'pilot@sunshade.icu' },
       };
       const sessionJson = JSON.stringify(sessionPayload);
@@ -198,7 +219,7 @@ describe('cookieStorage', () => {
 
     it('returns null on Hub sign-out without resurrecting from localStorage', () => {
       const storage = createCookieStorage();
-      const sessionJson = JSON.stringify({ token: 'active_session' });
+      const sessionJson = JSON.stringify({ token: 'active_session', expires_at: 2000 });
 
       storage.setItem('sb-token', sessionJson);
       expect(storage.getItem('sb-token')).toBe(sessionJson);
@@ -208,6 +229,52 @@ describe('cookieStorage', () => {
 
       // Studio must see null immediately
       expect(storage.getItem('sb-token')).toBeNull();
+    });
+
+    describe('Duplicate-name cookie ordering (both orderings tested)', () => {
+      const aliceSession = JSON.stringify({ user: { id: 'alice' }, expires_at: 1000 });
+      const bobSession = JSON.stringify({ user: { id: 'bob' }, expires_at: 2000 });
+
+      const aliceEncoded = `${BASE64_PREFIX}${stringToBase64URL(aliceSession)}`;
+      const bobEncoded = `${BASE64_PREFIX}${stringToBase64URL(bobSession)}`;
+
+      it('Case 1: Host-only Alice appears FIRST, Shared-domain Bob appears SECOND', () => {
+        // Alice host-only inserted first
+        cookieJar.push({ name: 'sb-token', value: aliceEncoded, path: '/' });
+        // Bob domain inserted second
+        cookieJar.push({ name: 'sb-token', value: bobEncoded, domain: SSO_DOMAIN, path: '/' });
+
+        emitReversedOrder = false; // [Alice, Bob] in document.cookie
+        expect(document.cookie).toContain(aliceEncoded);
+
+        const storage = createCookieStorage();
+        const read = storage.getItem('sb-token');
+
+        // Bob's fresher session must be selected
+        expect(read).toBe(bobSession);
+
+        // Host-only Alice must be expired and deleted
+        expect(cookieJar.some((e) => e.name === 'sb-token' && !e.domain)).toBe(false);
+        expect(cookieJar.some((e) => e.name === 'sb-token' && e.domain === SSO_DOMAIN)).toBe(true);
+      });
+
+      it('Case 2: Shared-domain Bob appears FIRST, Host-only Alice appears SECOND', () => {
+        // Bob domain inserted first
+        cookieJar.push({ name: 'sb-token', value: bobEncoded, domain: SSO_DOMAIN, path: '/' });
+        // Alice host-only inserted second
+        cookieJar.push({ name: 'sb-token', value: aliceEncoded, path: '/' });
+
+        emitReversedOrder = false; // [Bob, Alice] in document.cookie
+        const storage = createCookieStorage();
+        const read = storage.getItem('sb-token');
+
+        // Bob's fresher session must be selected
+        expect(read).toBe(bobSession);
+
+        // Host-only Alice must be expired and deleted
+        expect(cookieJar.some((e) => e.name === 'sb-token' && !e.domain)).toBe(false);
+        expect(cookieJar.some((e) => e.name === 'sb-token' && e.domain === SSO_DOMAIN)).toBe(true);
+      });
     });
 
     it('clears host-only cookie before writing domain cookie to prevent shadowing', () => {

@@ -9,7 +9,8 @@
  * - Preserves plain-string auth values (e.g. PKCE code verifiers) without requiring JSON format.
  * - Handles chunked cookies (key.0, key.1, etc.) for sessions exceeding MAX_CHUNK_SIZE.
  * - Manages cookie domain scoping (.sunshade.icu on SunShade domains, host-only on localhost/previews).
- * - Proactively clears host-only cookies before setting domain cookies to prevent cookie shadowing.
+ * - Proactively clears host-only cookies before setting domain cookies and on read migrations.
+ * - Resolves duplicate cookie names (host-only vs domain-scoped in any order) by comparing session freshness.
  * - Clears both domain-scoped and host-only cookies on sign-out to prevent session resurrection.
  */
 
@@ -59,10 +60,65 @@ export function stringFromBase64URL(base64url: string): string {
 }
 
 /**
+ * Extract expires_at timestamp or freshness metric from a raw cookie value.
+ * Returns -1 if not a valid session or cannot be parsed.
+ */
+export function getSessionFreshness(val: string): number {
+  try {
+    const raw = val.startsWith(BASE64_PREFIX)
+      ? stringFromBase64URL(val.slice(BASE64_PREFIX.length))
+      : val;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      if (typeof parsed.expires_at === 'number') {
+        return parsed.expires_at;
+      }
+      if (parsed.user?.updated_at) {
+        return new Date(parsed.user.updated_at).getTime();
+      }
+      if (parsed.user?.created_at) {
+        return new Date(parsed.user.created_at).getTime();
+      }
+      return 0; // Valid JSON session without timestamp
+    }
+  } catch {
+    // Non-JSON string
+  }
+  return -1;
+}
+
+/**
+ * Given two cookie values for the same name, select the fresher/preferred value.
+ */
+export function selectFresherCookieValue(valA: string, valB: string): string {
+  const freshnessA = getSessionFreshness(valA);
+  const freshnessB = getSessionFreshness(valB);
+
+  // If both have valid session timestamps, higher timestamp is fresher
+  if (freshnessA >= 0 && freshnessB >= 0) {
+    return freshnessB > freshnessA ? valB : valA;
+  }
+
+  // If only one is a valid JSON session, prefer the valid session
+  if (freshnessA >= 0 && freshnessB < 0) return valA;
+  if (freshnessB >= 0 && freshnessA < 0) return valB;
+
+  // If only one is base64-prefixed, prefer the prefixed one
+  const aPrefixed = valA.startsWith(BASE64_PREFIX);
+  const bPrefixed = valB.startsWith(BASE64_PREFIX);
+  if (aPrefixed && !bPrefixed) return valA;
+  if (bPrefixed && !aPrefixed) return valB;
+
+  // Fallback: prefer the second one
+  return valB;
+}
+
+/**
  * Parse all cookies from document.cookie into a Map of name -> decoded value.
  *
- * If duplicate cookie names exist in document.cookie (e.g. from a legacy host-only
- * cookie and a shared-domain cookie), prefers the base64-prefixed session value.
+ * If duplicate cookie names exist in document.cookie (e.g. both a stale host-only cookie
+ * and a refreshed domain-scoped cookie in either order), selects the fresher session
+ * by comparing session freshness / expiry timestamps.
  */
 export function parseDocumentCookies(): Map<string, string> {
   const cookieMap = new Map<string, string>();
@@ -83,13 +139,11 @@ export function parseDocumentCookies(): Map<string, string> {
 
     if (cookieMap.has(name)) {
       const existing = cookieMap.get(name)!;
-      // Prefer base64-prefixed session values over legacy plain text
-      if (existing.startsWith(BASE64_PREFIX)) {
-        continue;
-      }
+      const chosen = selectFresherCookieValue(existing, decoded);
+      cookieMap.set(name, chosen);
+    } else {
+      cookieMap.set(name, decoded);
     }
-
-    cookieMap.set(name, decoded);
   }
   return cookieMap;
 }
@@ -248,6 +302,23 @@ export function createCookieStorage(): SupportedStorage {
     getItem: (key: string): string | null => {
       if (!isBrowser()) return null;
 
+      // On SunShade domain, proactively migrate and clear any legacy host-only cookies
+      // if duplicate occurrences of this key or chunks are present in document.cookie.
+      if (isSunShadeDomain()) {
+        const raw = document.cookie;
+        if (raw) {
+          const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const regex = new RegExp(`(?:^|;\\s*)${escapedKey}(?:\\.\\d+)?=`, 'g');
+          const matches = raw.match(regex);
+          if (matches && matches.length > 1) {
+            expireHostOnlyCookie(key);
+            for (let i = 0; i < 10; i++) {
+              expireHostOnlyCookie(`${key}.${i}`);
+            }
+          }
+        }
+      }
+
       const cookies = parseDocumentCookies();
       const rawCombined = getCombinedCookieValue(key, cookies);
 
@@ -265,7 +336,7 @@ export function createCookieStorage(): SupportedStorage {
         }
       }
 
-      // Plain unencoded string (e.g. legacy or unencoded values)
+      // Plain unencoded string
       return rawCombined;
     },
 
