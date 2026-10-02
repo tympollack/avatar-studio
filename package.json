@@ -24,8 +24,8 @@
     "deploy:production": "wrangler pages deploy dist --project-name=avatar-studio --branch=main"
   },
   "dependencies": {
-    "@digitalcanopy/supabase": "^0.1.0",
     "@digitalcanopy/ui": "^0.1.2",
+    "@supabase/supabase-js": "^2.117.2",
     "clsx": "^2.1.1",
     "konva": "^10.7.0",
     "lucide-react": "^0.446.0",
