@@ -15,7 +15,6 @@ describe('cookieStorage', () => {
   const originalDocument = global.document;
 
   afterEach(() => {
-    // Restore globals
     if (originalWindow !== undefined) {
       global.window = originalWindow;
     } else {
@@ -33,6 +32,7 @@ describe('cookieStorage', () => {
       const samples = [
         'hello world',
         JSON.stringify({ access_token: 'tok_123', user: { id: 'u_1', name: 'Avatar \u{1F33F}' } }),
+        'plain_verifier_token_without_json',
         'special characters: + / = ? & % # @ !',
       ];
 
@@ -61,7 +61,6 @@ describe('cookieStorage', () => {
       expect(chunks[0].name).toBe('large-key.0');
       expect(chunks[1].name).toBe('large-key.1');
 
-      // Reconstructed value matches original
       const combined = chunks.map((c) => c.value).join('');
       expect(combined).toBe(longValue);
     });
@@ -83,54 +82,88 @@ describe('cookieStorage', () => {
     });
   });
 
-  describe('createCookieStorage in mock browser environment', () => {
-    let mockCookie = '';
-    let mockLocalStorage: Record<string, string> = {};
+  describe('Scoped cookie jar mock (host-only vs domain-scoped)', () => {
+    interface CookieJarEntry {
+      name: string;
+      value: string;
+      domain?: string;
+      path: string;
+    }
+
+    let cookieJar: CookieJarEntry[] = [];
 
     beforeEach(() => {
-      mockCookie = '';
-      mockLocalStorage = {};
+      cookieJar = [];
 
-      // Setup mock window & document
       (global as any).window = {
         location: {
           hostname: 'avatar.sunshade.icu',
           protocol: 'https:',
         },
-        localStorage: {
-          getItem: (k: string) => mockLocalStorage[k] ?? null,
-          setItem: (k: string, v: string) => {
-            mockLocalStorage[k] = v;
-          },
-          removeItem: (k: string) => {
-            delete mockLocalStorage[k];
-          },
-        },
       };
 
       (global as any).document = {
-        get cookie() {
-          return mockCookie;
+        get cookie(): string {
+          const currentHost = window.location.hostname.toLowerCase();
+          // Find all cookies matching currentHost (host-only or matching domain)
+          const visible = cookieJar.filter((entry) => {
+            if (!entry.domain) {
+              return entry.name && currentHost === 'avatar.sunshade.icu';
+            }
+            const cleanDomain = entry.domain.replace(/^\./, '').toLowerCase();
+            return currentHost === cleanDomain || currentHost.endsWith('.' + cleanDomain);
+          });
+
+          return visible.map((e) => `${e.name}=${encodeURIComponent(e.value)}`).join('; ');
         },
-        set cookie(val: string) {
-          // Emulate standard browser cookie setter: single cookie string
-          const [cookiePart] = val.split(';');
-          const [name, ...valParts] = cookiePart.split('=');
-          const trimmedName = name.trim();
-          const cookieVal = valParts.join('=');
 
-          const isExpire = /Max-Age=0/i.test(val) || /Expires=Thu, 01 Jan 1970/i.test(val);
+        set cookie(rawCookieString: string) {
+          const parts = rawCookieString.split(';').map((p) => p.trim());
+          const [nameVal, ...attrs] = parts;
+          const eqIdx = nameVal.indexOf('=');
+          const name = eqIdx === -1 ? nameVal : nameVal.slice(0, eqIdx);
+          const rawValue = eqIdx === -1 ? '' : nameVal.slice(eqIdx + 1);
+          const value = decodeURIComponent(rawValue);
 
-          const existing = parseDocumentCookies();
-          if (isExpire) {
-            existing.delete(trimmedName);
-          } else {
-            existing.set(trimmedName, decodeURIComponent(cookieVal));
+          let domain: string | undefined;
+          let path = '/';
+          let isExpired = false;
+
+          for (const attr of attrs) {
+            const [attrKey, ...attrValParts] = attr.split('=');
+            const k = attrKey.toLowerCase().trim();
+            const v = attrValParts.join('=').trim();
+            if (k === 'domain') {
+              domain = v;
+            } else if (k === 'path') {
+              path = v;
+            } else if (k === 'max-age' && Number(v) <= 0) {
+              isExpired = true;
+            } else if (k === 'expires' && new Date(v).getTime() <= Date.now()) {
+              isExpired = true;
+            }
           }
 
-          mockCookie = Array.from(existing.entries())
-            .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
-            .join('; ');
+          const existingIndex = cookieJar.findIndex((e) => {
+            const sameName = e.name === name;
+            const samePath = e.path === path;
+            const sameDomain =
+              (e.domain?.toLowerCase() ?? undefined) === (domain?.toLowerCase() ?? undefined);
+            return sameName && samePath && sameDomain;
+          });
+
+          if (isExpired) {
+            if (existingIndex !== -1) {
+              cookieJar.splice(existingIndex, 1);
+            }
+          } else {
+            const entry: CookieJarEntry = { name, value, domain, path };
+            if (existingIndex !== -1) {
+              cookieJar[existingIndex] = entry;
+            } else {
+              cookieJar.push(entry);
+            }
+          }
         },
       };
     });
@@ -145,64 +178,89 @@ describe('cookieStorage', () => {
       const sessionJson = JSON.stringify(sessionPayload);
       const encodedCookie = `${BASE64_PREFIX}${stringToBase64URL(sessionJson)}`;
 
-      // Simulate Hub cookie set on .sunshade.icu
-      document.cookie = `sb-projectref-auth-token=${encodeURIComponent(encodedCookie)}; domain=.sunshade.icu; path=/`;
+      // Simulate Hub writing shared .sunshade.icu cookie
+      document.cookie = `sb-projectref-auth-token=${encodeURIComponent(encodedCookie)}; Domain=.sunshade.icu; Path=/`;
 
       const readSession = storage.getItem('sb-projectref-auth-token');
       expect(readSession).toBe(sessionJson);
       expect(JSON.parse(readSession!)).toEqual(sessionPayload);
     });
 
-    it('writes session cookie and mirrors to localStorage', () => {
+    it('reads plain-string values (e.g. PKCE code verifiers) without requiring JSON format', () => {
       const storage = createCookieStorage();
-      const sessionPayload = {
-        access_token: 'new_token_456',
-        user: { id: 'usr_456' },
-      };
-      const sessionJson = JSON.stringify(sessionPayload);
+      const verifierToken = 'plain_code_verifier_1234567890_abcdef';
 
-      storage.setItem('sb-projectref-auth-token', sessionJson);
+      storage.setItem('sb-demo-auth-token-code-verifier', verifierToken);
 
-      // Verify cookie is set
-      const readVal = storage.getItem('sb-projectref-auth-token');
-      expect(readVal).toBe(sessionJson);
-
-      // Verify localStorage was also updated
-      expect(mockLocalStorage['sb-projectref-auth-token']).toBe(sessionJson);
+      const readVal = storage.getItem('sb-demo-auth-token-code-verifier');
+      expect(readVal).toBe(verifierToken);
     });
 
-    it('removes cookie and localStorage on removeItem', () => {
+    it('returns null on Hub sign-out without resurrecting from localStorage', () => {
       const storage = createCookieStorage();
-      storage.setItem('sb-projectref-auth-token', '{"token":"123"}');
-      expect(storage.getItem('sb-projectref-auth-token')).toBe('{"token":"123"}');
+      const sessionJson = JSON.stringify({ token: 'active_session' });
 
-      storage.removeItem('sb-projectref-auth-token');
-      expect(storage.getItem('sb-projectref-auth-token')).toBeNull();
-      expect(mockLocalStorage['sb-projectref-auth-token']).toBeUndefined();
+      storage.setItem('sb-token', sessionJson);
+      expect(storage.getItem('sb-token')).toBe(sessionJson);
+
+      // Hub signs out: removes .sunshade.icu cookie
+      document.cookie = `sb-token=; Domain=.sunshade.icu; Path=/; Max-Age=0`;
+
+      // Studio must see null immediately
+      expect(storage.getItem('sb-token')).toBeNull();
     });
 
-    it('falls back to localStorage if cookie is not set', () => {
+    it('clears host-only cookie before writing domain cookie to prevent shadowing', () => {
       const storage = createCookieStorage();
-      mockLocalStorage['sb-projectref-auth-token'] = '{"local":true}';
 
-      expect(storage.getItem('sb-projectref-auth-token')).toBe('{"local":true}');
+      // Simulate existing host-only cookie for Alice (no Domain attribute)
+      document.cookie = `sb-token=${encodeURIComponent(BASE64_PREFIX + stringToBase64URL('alice_session'))}; Path=/`;
+
+      // Verify host-only cookie is initially in the jar
+      const hostOnlyEntry = cookieJar.find((e) => e.name === 'sb-token' && !e.domain);
+      expect(hostOnlyEntry).toBeDefined();
+
+      // Now Bob signs in: storage.setItem writes domain cookie on SunShade host
+      storage.setItem('sb-token', 'bob_session');
+
+      // The host-only cookie must be expired and deleted
+      const remainingHostOnly = cookieJar.find((e) => e.name === 'sb-token' && !e.domain);
+      expect(remainingHostOnly).toBeUndefined();
+
+      // The domain cookie must be present with Bob's session
+      const domainEntry = cookieJar.find((e) => e.name === 'sb-token' && e.domain === SSO_DOMAIN);
+      expect(domainEntry).toBeDefined();
+
+      // Reading the session returns Bob, never Alice
+      expect(storage.getItem('sb-token')).toBe('bob_session');
     });
 
-    it('clears stale chunks when a new smaller session overwrites a chunked session', () => {
+    it('clears stale chunks across both scopes when a smaller session is written', () => {
       const storage = createCookieStorage();
+
       // Write large chunked session
-      const bigSession = JSON.stringify({ data: 'x'.repeat(4000) });
-      storage.setItem('sb-token', bigSession);
-      expect(mockCookie).toContain('sb-token.0');
-      expect(mockCookie).toContain('sb-token.1');
+      const bigSession = 'x'.repeat(4000);
+      storage.setItem('sb-large', bigSession);
 
-      // Overwrite with small session
-      const smallSession = JSON.stringify({ data: 'small' });
-      storage.setItem('sb-token', smallSession);
+      expect(cookieJar.some((e) => e.name === 'sb-large.0')).toBe(true);
+      expect(cookieJar.some((e) => e.name === 'sb-large.1')).toBe(true);
 
-      // Old chunks should be cleared
-      expect(mockCookie).not.toContain('sb-token.1');
-      expect(storage.getItem('sb-token')).toBe(smallSession);
+      // Overwrite with small unchunked session
+      storage.setItem('sb-large', 'small');
+
+      // Old chunk 1 must be gone
+      expect(cookieJar.some((e) => e.name === 'sb-large.1')).toBe(false);
+      expect(storage.getItem('sb-large')).toBe('small');
+    });
+
+    it('removeItem expires both host-only and domain-scoped cookies', () => {
+      const storage = createCookieStorage();
+      storage.setItem('sb-token', 'session_data');
+      expect(storage.getItem('sb-token')).toBe('session_data');
+
+      storage.removeItem('sb-token');
+      expect(storage.getItem('sb-token')).toBeNull();
+      expect(cookieJar.length).toBe(0);
     });
   });
 
@@ -215,7 +273,7 @@ describe('cookieStorage', () => {
     it('safely returns null without throwing when window/document are absent', () => {
       const storage = createCookieStorage();
       expect(storage.getItem('sb-token')).toBeNull();
-      expect(() => storage.setItem('sb-token', '{}')).not.toThrow();
+      expect(() => storage.setItem('sb-token', 'val')).not.toThrow();
       expect(() => storage.removeItem('sb-token')).not.toThrow();
     });
   });
