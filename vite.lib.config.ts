@@ -31,7 +31,7 @@ export default defineConfig({
         'zod',
         'react',
         'react-dom',
-        '@digitalcanopy/supabase',
+        '@supabase/supabase-js',
         '@digitalcanopy/ui',
       ],
     },

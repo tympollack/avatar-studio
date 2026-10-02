@@ -7,7 +7,7 @@ import React, {
   useState,
 } from 'react';
 import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
-import { supabase } from '@digitalcanopy/supabase';
+import { supabase } from '@/lib/supabase';
 
 // ---------------------------------------------------------------------------
 // Context
@@ -34,7 +34,7 @@ interface AuthProviderProps {
 
 /**
  * AuthProvider resolves the Supabase session on mount by reading the shared
- * .sunshade.icu cookie via the @digitalcanopy/supabase singleton client.
+ * .sunshade.icu cookie via the Supabase client singleton.
  *
  * No login redirect is issued — unauthenticated users enter the studio in
  * guest (sandbox) mode and see an "Authenticate with Hub to Save" CTA.
