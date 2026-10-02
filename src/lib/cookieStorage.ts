@@ -5,9 +5,12 @@
  *
  * Fully compatible with @supabase/ssr and SunShade Hub's session cookies:
  * - Reads and writes shared cookies across *.sunshade.icu subdomains.
- * - Matches @supabase/ssr session serialization ('base64-' prefix + base64url JSON).
+ * - Matches @supabase/ssr session serialization ('base64-' prefix + base64url string).
+ * - Preserves plain-string auth values (e.g. PKCE code verifiers) without requiring JSON format.
  * - Handles chunked cookies (key.0, key.1, etc.) for sessions exceeding MAX_CHUNK_SIZE.
  * - Manages cookie domain scoping (.sunshade.icu on SunShade domains, host-only on localhost/previews).
+ * - Proactively clears host-only cookies before setting domain cookies and on read migrations.
+ * - Resolves duplicate cookie names (host-only vs domain-scoped in any order) by comparing session freshness.
  * - Clears both domain-scoped and host-only cookies on sign-out to prevent session resurrection.
  */
 
@@ -57,7 +60,65 @@ export function stringFromBase64URL(base64url: string): string {
 }
 
 /**
+ * Extract expires_at timestamp or freshness metric from a raw cookie value.
+ * Returns -1 if not a valid session or cannot be parsed.
+ */
+export function getSessionFreshness(val: string): number {
+  try {
+    const raw = val.startsWith(BASE64_PREFIX)
+      ? stringFromBase64URL(val.slice(BASE64_PREFIX.length))
+      : val;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      if (typeof parsed.expires_at === 'number') {
+        return parsed.expires_at;
+      }
+      if (parsed.user?.updated_at) {
+        return new Date(parsed.user.updated_at).getTime();
+      }
+      if (parsed.user?.created_at) {
+        return new Date(parsed.user.created_at).getTime();
+      }
+      return 0; // Valid JSON session without timestamp
+    }
+  } catch {
+    // Non-JSON string
+  }
+  return -1;
+}
+
+/**
+ * Given two cookie values for the same name, select the fresher/preferred value.
+ */
+export function selectFresherCookieValue(valA: string, valB: string): string {
+  const freshnessA = getSessionFreshness(valA);
+  const freshnessB = getSessionFreshness(valB);
+
+  // If both have valid session timestamps, higher timestamp is fresher
+  if (freshnessA >= 0 && freshnessB >= 0) {
+    return freshnessB > freshnessA ? valB : valA;
+  }
+
+  // If only one is a valid JSON session, prefer the valid session
+  if (freshnessA >= 0 && freshnessB < 0) return valA;
+  if (freshnessB >= 0 && freshnessA < 0) return valB;
+
+  // If only one is base64-prefixed, prefer the prefixed one
+  const aPrefixed = valA.startsWith(BASE64_PREFIX);
+  const bPrefixed = valB.startsWith(BASE64_PREFIX);
+  if (aPrefixed && !bPrefixed) return valA;
+  if (bPrefixed && !aPrefixed) return valB;
+
+  // Fallback: prefer the second one
+  return valB;
+}
+
+/**
  * Parse all cookies from document.cookie into a Map of name -> decoded value.
+ *
+ * If duplicate cookie names exist in document.cookie (e.g. both a stale host-only cookie
+ * and a refreshed domain-scoped cookie in either order), selects the fresher session
+ * by comparing session freshness / expiry timestamps.
  */
 export function parseDocumentCookies(): Map<string, string> {
   const cookieMap = new Map<string, string>();
@@ -69,10 +130,19 @@ export function parseDocumentCookies(): Map<string, string> {
     if (eqIdx === -1) continue;
     const name = part.slice(0, eqIdx).trim();
     const value = part.slice(eqIdx + 1).trim();
+    let decoded = value;
     try {
-      cookieMap.set(name, decodeURIComponent(value));
+      decoded = decodeURIComponent(value);
     } catch {
-      cookieMap.set(name, value);
+      decoded = value;
+    }
+
+    if (cookieMap.has(name)) {
+      const existing = cookieMap.get(name)!;
+      const chosen = selectFresherCookieValue(existing, decoded);
+      cookieMap.set(name, chosen);
+    } else {
+      cookieMap.set(name, decoded);
     }
   }
   return cookieMap;
@@ -180,9 +250,9 @@ export function serializeCookie(
 }
 
 /**
- * Expire a cookie by name, both with and without domain.
+ * Expire a host-only cookie by name (without domain attribute).
  */
-export function expireCookie(name: string): void {
+export function expireHostOnlyCookie(name: string): void {
   if (!isBrowser()) return;
 
   const expireOptions = {
@@ -193,15 +263,34 @@ export function expireCookie(name: string): void {
     secure: window.location.protocol === 'https:',
   };
 
-  // Host-only deletion
   document.cookie = serializeCookie(name, '', expireOptions);
+}
 
-  // Domain-scoped deletion if applicable
+/**
+ * Expire a domain-scoped cookie by name (with Domain=.sunshade.icu).
+ */
+export function expireDomainCookie(name: string): void {
+  if (!isBrowser()) return;
+
+  const expireOptions = {
+    path: '/',
+    maxAge: 0,
+    expires: new Date(0),
+    domain: SSO_DOMAIN,
+    sameSite: 'Lax' as const,
+    secure: window.location.protocol === 'https:',
+  };
+
+  document.cookie = serializeCookie(name, '', expireOptions);
+}
+
+/**
+ * Expire a cookie by name across both host-only and domain scopes.
+ */
+export function expireCookie(name: string): void {
+  expireHostOnlyCookie(name);
   if (isSunShadeDomain()) {
-    document.cookie = serializeCookie(name, '', {
-      ...expireOptions,
-      domain: SSO_DOMAIN,
-    });
+    expireDomainCookie(name);
   }
 }
 
@@ -213,44 +302,50 @@ export function createCookieStorage(): SupportedStorage {
     getItem: (key: string): string | null => {
       if (!isBrowser()) return null;
 
+      // On SunShade domain, proactively migrate and clear any legacy host-only cookies
+      // if duplicate occurrences of this key or chunks are present in document.cookie.
+      if (isSunShadeDomain()) {
+        const raw = document.cookie;
+        if (raw) {
+          const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const regex = new RegExp(`(?:^|;\\s*)${escapedKey}(?:\\.\\d+)?=`, 'g');
+          const matches = raw.match(regex);
+          if (matches && matches.length > 1) {
+            expireHostOnlyCookie(key);
+            for (let i = 0; i < 10; i++) {
+              expireHostOnlyCookie(`${key}.${i}`);
+            }
+          }
+        }
+      }
+
       const cookies = parseDocumentCookies();
       const rawCombined = getCombinedCookieValue(key, cookies);
 
       if (!rawCombined) {
-        // Fallback to localStorage if available (e.g. during local sandbox tests)
-        try {
-          return window.localStorage?.getItem(key) ?? null;
-        } catch {
-          return null;
-        }
+        return null;
       }
 
       // Check for base64- prefix (written by @supabase/ssr / Hub)
       if (rawCombined.startsWith(BASE64_PREFIX)) {
         try {
-          const decoded = stringFromBase64URL(rawCombined.slice(BASE64_PREFIX.length));
-          JSON.parse(decoded);
-          return decoded;
+          return stringFromBase64URL(rawCombined.slice(BASE64_PREFIX.length));
         } catch (err) {
-          console.warn('[cookieStorage] Failed to decode base64url cookie session:', err);
+          console.warn('[cookieStorage] Failed to decode base64url cookie value:', err);
           return null;
         }
       }
 
-      // Plain unencoded JSON
-      try {
-        JSON.parse(rawCombined);
-        return rawCombined;
-      } catch {
-        return rawCombined;
-      }
+      // Plain unencoded string
+      return rawCombined;
     },
 
     setItem: (key: string, value: string): void => {
       if (!isBrowser()) return;
 
       const isHttps = window.location.protocol === 'https:';
-      const domain = isSunShadeDomain() ? SSO_DOMAIN : undefined;
+      const onSunShade = isSunShadeDomain();
+      const domain = onSunShade ? SSO_DOMAIN : undefined;
 
       // Encode matching @supabase/ssr conventions
       const encoded = BASE64_PREFIX + stringToBase64URL(value);
@@ -266,13 +361,19 @@ export function createCookieStorage(): SupportedStorage {
       const newChunkNames = new Set(chunks.map((c) => c.name));
       const staleChunkNames = existingMatchingNames.filter((name) => !newChunkNames.has(name));
 
-      // Remove stale chunks
+      // Remove stale chunks in both scopes
       for (const staleName of staleChunkNames) {
         expireCookie(staleName);
       }
 
       // Set new chunks
       for (const chunk of chunks) {
+        // When on a SunShade host, explicitly expire any matching host-only cookie first
+        // so it cannot shadow the domain-scoped cookie in document.cookie.
+        if (onSunShade) {
+          expireHostOnlyCookie(chunk.name);
+        }
+
         document.cookie = serializeCookie(chunk.name, chunk.value, {
           path: '/',
           maxAge: DEFAULT_MAX_AGE,
@@ -280,13 +381,6 @@ export function createCookieStorage(): SupportedStorage {
           sameSite: 'Lax',
           secure: isHttps,
         });
-      }
-
-      // Also mirror to localStorage for fast access / offline PWA cache
-      try {
-        window.localStorage?.setItem(key, value);
-      } catch {
-        // Ignore quota/private mode errors
       }
     },
 
@@ -299,18 +393,12 @@ export function createCookieStorage(): SupportedStorage {
         chunkLikeRegex.test(name)
       );
 
-      if (matchingNames.length === 0) {
-        expireCookie(key);
-      } else {
-        for (const name of matchingNames) {
-          expireCookie(name);
-        }
-      }
+      // Always expire the unchunked key in both scopes
+      expireCookie(key);
 
-      try {
-        window.localStorage?.removeItem(key);
-      } catch {
-        // Ignore errors
+      // Expire any numbered chunks in both scopes
+      for (const name of matchingNames) {
+        expireCookie(name);
       }
     },
   };
