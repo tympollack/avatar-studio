@@ -18,7 +18,7 @@ import type React from 'react';
 import { useState, useEffect } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { useAuth } from '../auth/AuthProvider';
-import { supabase } from '@digitalcanopy/supabase';
+import { supabase } from '@/lib/supabase';
 import { CanvasProvider } from '../store/CanvasProvider';
 import { useCanvasStore } from '../store/canvasStore';
 import { AvatarCanvasStage } from './canvas/AvatarCanvasStage';
