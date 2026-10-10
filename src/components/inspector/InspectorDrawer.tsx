@@ -365,18 +365,19 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
       console.warn('[InspectorDrawer] onSave is not provided; skipping save');
       return;
     }
+    const saveSnapshotDirtyCount = state.dirtyCount;
     setIsSaving(true);
     try {
       await onSave();
-      // Only mark clean after a successful save
-      dispatch({ type: 'MARK_CLEAN' });
+      // Only mark clean if no newer edits occurred during the save operation
+      dispatch({ type: 'MARK_CLEAN', dirtyCount: saveSnapshotDirtyCount });
     } catch (err) {
       // Save failed — keep isDirty true so the user knows to retry
       console.error('[InspectorDrawer] Save failed:', err);
     } finally {
       setIsSaving(false);
     }
-  }, [onSave, dispatch]);
+  }, [onSave, state.dirtyCount, dispatch]);
 
   return (
     <>

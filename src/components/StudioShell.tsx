@@ -25,7 +25,7 @@ import { useCanvasStore } from '../store/canvasStore';
 import { AvatarCanvasStage } from './canvas/AvatarCanvasStage';
 import { InspectorDrawer } from './inspector/InspectorDrawer';
 import type { CosmeticItem, UserCosmeticLoadout } from '../types/avatar';
-import { exportAvatarBadges, downloadBadgeBlob } from '../utils/exportBadge';
+import { exportAvatarBadges, downloadBadgeBlob, preloadImages } from '../utils/exportBadge';
 
 // ──────────────────────────────────────────────
 // Catalog loader (inner — needs CanvasProvider in tree)
@@ -206,6 +206,24 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
         let profile = '';
         if (stageRef.current) {
           try {
+            // Preload all active images so placeholders are never captured into badges
+            const activeUrls = [
+              state.catalogIndex[state.backgroundId]?.assetUrl,
+              state.catalogIndex[state.landscapeConfig.landscapeId]?.assetUrl,
+              state.catalogIndex[state.avatarConfig.silhouetteId]?.assetUrl,
+              state.avatarConfig.eyesId ? state.catalogIndex[state.avatarConfig.eyesId]?.assetUrl : undefined,
+              state.avatarConfig.mouthId ? state.catalogIndex[state.avatarConfig.mouthId]?.assetUrl : undefined,
+              state.avatarConfig.hairId ? state.catalogIndex[state.avatarConfig.hairId]?.assetUrl : undefined,
+              state.avatarConfig.clothingId ? state.catalogIndex[state.avatarConfig.clothingId]?.assetUrl : undefined,
+              state.avatarConfig.hatId ? state.catalogIndex[state.avatarConfig.hatId]?.assetUrl : undefined,
+              state.avatarConfig.accessoryId ? state.catalogIndex[state.avatarConfig.accessoryId]?.assetUrl : undefined,
+              state.avatarConfig.handRigId ? state.catalogIndex[state.avatarConfig.handRigId]?.assetUrl : undefined,
+              ...state.critters.map((c) => state.catalogIndex[c.critterId]?.assetUrl),
+              state.catalogIndex[state.frameId]?.assetUrl,
+            ];
+            await preloadImages(activeUrls);
+            stageRef.current.batchDraw();
+
             const badges = await exportAvatarBadges(stageRef.current);
             chip = badges.dataUrl128;
             profile = badges.dataUrl512;
@@ -252,6 +270,23 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
   const handleExportBadge = async (size: 128 | 512) => {
     if (!stageRef.current) return;
     try {
+      const activeUrls = [
+        state.catalogIndex[state.backgroundId]?.assetUrl,
+        state.catalogIndex[state.landscapeConfig.landscapeId]?.assetUrl,
+        state.catalogIndex[state.avatarConfig.silhouetteId]?.assetUrl,
+        state.avatarConfig.eyesId ? state.catalogIndex[state.avatarConfig.eyesId]?.assetUrl : undefined,
+        state.avatarConfig.mouthId ? state.catalogIndex[state.avatarConfig.mouthId]?.assetUrl : undefined,
+        state.avatarConfig.hairId ? state.catalogIndex[state.avatarConfig.hairId]?.assetUrl : undefined,
+        state.avatarConfig.clothingId ? state.catalogIndex[state.avatarConfig.clothingId]?.assetUrl : undefined,
+        state.avatarConfig.hatId ? state.catalogIndex[state.avatarConfig.hatId]?.assetUrl : undefined,
+        state.avatarConfig.accessoryId ? state.catalogIndex[state.avatarConfig.accessoryId]?.assetUrl : undefined,
+        state.avatarConfig.handRigId ? state.catalogIndex[state.avatarConfig.handRigId]?.assetUrl : undefined,
+        ...state.critters.map((c) => state.catalogIndex[c.critterId]?.assetUrl),
+        state.catalogIndex[state.frameId]?.assetUrl,
+      ];
+      await preloadImages(activeUrls);
+      stageRef.current.batchDraw();
+
       const badges = await exportAvatarBadges(stageRef.current);
       if (size === 128) {
         downloadBadgeBlob(badges.blob128, 'avatar-badge-128x128.webp');

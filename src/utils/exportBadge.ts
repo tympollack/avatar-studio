@@ -52,6 +52,26 @@ function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, quality: numb
 }
 
 /**
+ * Ensures all requested asset image URLs are fully loaded into browser cache before rasterization.
+ * Rejects if any image URL fails to load, preventing incomplete or placeholder renders from being persisted.
+ */
+export async function preloadImages(urls: (string | undefined)[]): Promise<void> {
+  const validUrls = Array.from(new Set(urls.filter((url): url is string => Boolean(url))));
+  await Promise.all(
+    validUrls.map(
+      (url) =>
+        new Promise<void>((resolve, reject) => {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => resolve();
+          img.onerror = () => reject(new Error(`Failed to load asset image: ${url}`));
+          img.src = url;
+        }),
+    ),
+  );
+}
+
+/**
  * Generates flattened 128×128 and 512×512 WebP badges from the Konva Stage.
  * Preserves the active interactive transform (zoom and pan) so badges are
  * rendered from an untransformed canonical view, and dynamically scales pixelRatio
