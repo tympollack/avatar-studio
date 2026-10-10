@@ -210,7 +210,8 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
             chip = badges.dataUrl128;
             profile = badges.dataUrl512;
           } catch (badgeErr) {
-            console.warn('[StudioEditor] Badge export warning:', badgeErr);
+            console.error('[StudioEditor] Badge export failed during save:', badgeErr);
+            throw new Error('Failed to generate avatar badges. Aborting save to prevent data corruption.');
           }
         }
 

@@ -53,6 +53,9 @@ function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, quality: numb
 
 /**
  * Generates flattened 128×128 and 512×512 WebP badges from the Konva Stage.
+ * Preserves the active interactive transform (zoom and pan) so badges are
+ * rendered from an untransformed canonical view, and dynamically scales pixelRatio
+ * so source resolution is at least 512px regardless of screen size.
  */
 export async function exportAvatarBadges(
   stage: Konva.Stage,
@@ -61,8 +64,27 @@ export async function exportAvatarBadges(
   const mimeType = options.mimeType ?? 'image/webp';
   const quality = options.quality ?? 0.95;
 
-  // Capture stage at 2x pixel ratio for maximum fidelity
-  const nativeCanvas = stage.toCanvas({ pixelRatio: 2 });
+  // Preserve user pan & zoom transforms to capture canonical avatar framing
+  const prevScale = { x: stage.scaleX(), y: stage.scaleY() };
+  const prevPos = { x: stage.x(), y: stage.y() };
+
+  // Calculate pixel ratio ensuring at least 512px source dimension on any viewport
+  const width = Math.max(stage.width(), 1);
+  const minRequiredRatio = Math.max(2, Math.ceil(512 / width));
+
+  let nativeCanvas: HTMLCanvasElement;
+  try {
+    stage.scale({ x: 1, y: 1 });
+    stage.position({ x: 0, y: 0 });
+    stage.batchDraw();
+
+    nativeCanvas = stage.toCanvas({ pixelRatio: minRequiredRatio });
+  } finally {
+    // Restore user viewport pan & zoom
+    stage.scale(prevScale);
+    stage.position(prevPos);
+    stage.batchDraw();
+  }
 
   const canvas128 = resampleCanvas(nativeCanvas, 128);
   const canvas512 = resampleCanvas(nativeCanvas, 512);
