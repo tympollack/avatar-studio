@@ -32,13 +32,74 @@ import type { CosmeticItem, CosmeticLayerType, CritterPerchLocation } from '../.
 // Tab → layer type mapping
 // ──────────────────────────────────────────────
 
+// ──────────────────────────────────────────────
+// Tab → layer type mapping
+// ──────────────────────────────────────────────
+
 const TAB_LAYER_TYPES: Record<InspectorTab, CosmeticLayerType[]> = {
-  Frame: ['frame'],
+  Frame: ['frame', 'avatar_frame'],
   Background: ['background'],
-  // Avatar tab now includes clothing so all three avatar sub-layers are selectable.
-  Avatar: ['avatar_body', 'avatar_hand', 'avatar_clothing'],
+  // Avatar tab includes modular Kenney character layers
+  Avatar: [
+    'avatar_body',
+    'avatar_base',
+    'avatar_eyes',
+    'avatar_mouth',
+    'avatar_hair',
+    'avatar_clothing',
+    'avatar_outfit',
+    'avatar_hat',
+    'avatar_accessory',
+    'avatar_hand',
+  ],
   Companion: ['critter'],
   Landscape: ['landscape'],
+};
+
+export type AvatarSubcategory =
+  | 'All'
+  | 'Base'
+  | 'Eyes'
+  | 'Mouth'
+  | 'Hair'
+  | 'Garments'
+  | 'Hats'
+  | 'Accessories'
+  | 'Hands';
+
+const AVATAR_SUBCATEGORIES: AvatarSubcategory[] = [
+  'All',
+  'Base',
+  'Eyes',
+  'Mouth',
+  'Hair',
+  'Garments',
+  'Hats',
+  'Accessories',
+  'Hands',
+];
+
+const SUBCATEGORY_LAYER_MAP: Record<AvatarSubcategory, CosmeticLayerType[]> = {
+  All: [
+    'avatar_body',
+    'avatar_base',
+    'avatar_eyes',
+    'avatar_mouth',
+    'avatar_hair',
+    'avatar_clothing',
+    'avatar_outfit',
+    'avatar_hat',
+    'avatar_accessory',
+    'avatar_hand',
+  ],
+  Base: ['avatar_body', 'avatar_base'],
+  Eyes: ['avatar_eyes'],
+  Mouth: ['avatar_mouth'],
+  Hair: ['avatar_hair'],
+  Garments: ['avatar_clothing', 'avatar_outfit'],
+  Hats: ['avatar_hat'],
+  Accessories: ['avatar_accessory'],
+  Hands: ['avatar_hand'],
 };
 
 // ──────────────────────────────────────────────
@@ -144,12 +205,16 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
 }) => {
   const { state, dispatch } = useCanvasStore();
   const { activeTab, setActiveTab } = useInspectorTabs();
+  const [avatarSubcategory, setAvatarSubcategory] = useState<AvatarSubcategory>('All');
   const [isSaving, setIsSaving] = useState(false);
 
   // ── Catalog filtering ─────────────────────
   const layerTypes = TAB_LAYER_TYPES[activeTab];
+  const activeSubcategoryLayers =
+    activeTab === 'Avatar' ? SUBCATEGORY_LAYER_MAP[avatarSubcategory] : layerTypes;
+
   const filteredItems: CosmeticItem[] = Object.values(state.catalogIndex).filter(
-    (item) => layerTypes.includes(item.layerType),
+    (item) => activeSubcategoryLayers.includes(item.layerType),
   );
 
   // ── Selection handler ─────────────────────
@@ -163,12 +228,23 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
         break;
       case 'Avatar': {
         const item = state.catalogIndex[id];
-        if (item?.layerType === 'avatar_body') {
+        if (!item) break;
+        if (item.layerType === 'avatar_body' || item.layerType === 'avatar_base') {
           dispatch({ type: 'SET_AVATAR_CONFIG', config: { silhouetteId: id } });
-        } else if (item?.layerType === 'avatar_hand') {
-          dispatch({ type: 'SET_AVATAR_CONFIG', config: { handRigId: id } });
-        } else if (item?.layerType === 'avatar_clothing') {
+        } else if (item.layerType === 'avatar_eyes') {
+          dispatch({ type: 'SET_AVATAR_CONFIG', config: { eyesId: id } });
+        } else if (item.layerType === 'avatar_mouth') {
+          dispatch({ type: 'SET_AVATAR_CONFIG', config: { mouthId: id } });
+        } else if (item.layerType === 'avatar_hair') {
+          dispatch({ type: 'SET_AVATAR_CONFIG', config: { hairId: id } });
+        } else if (item.layerType === 'avatar_clothing' || item.layerType === 'avatar_outfit') {
           dispatch({ type: 'SET_AVATAR_CONFIG', config: { clothingId: id } });
+        } else if (item.layerType === 'avatar_hat') {
+          dispatch({ type: 'SET_AVATAR_CONFIG', config: { hatId: id } });
+        } else if (item.layerType === 'avatar_accessory') {
+          dispatch({ type: 'SET_AVATAR_CONFIG', config: { accessoryId: id } });
+        } else if (item.layerType === 'avatar_hand') {
+          dispatch({ type: 'SET_AVATAR_CONFIG', config: { handRigId: id } });
         }
         break;
       }
@@ -258,9 +334,18 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
       case 'Background':
         return item.id === state.backgroundId;
       case 'Avatar': {
-        if (item.layerType === 'avatar_body') return item.id === state.avatarConfig.silhouetteId;
+        if (item.layerType === 'avatar_body' || item.layerType === 'avatar_base') {
+          return item.id === state.avatarConfig.silhouetteId;
+        }
+        if (item.layerType === 'avatar_eyes') return item.id === state.avatarConfig.eyesId;
+        if (item.layerType === 'avatar_mouth') return item.id === state.avatarConfig.mouthId;
+        if (item.layerType === 'avatar_hair') return item.id === state.avatarConfig.hairId;
+        if (item.layerType === 'avatar_clothing' || item.layerType === 'avatar_outfit') {
+          return item.id === state.avatarConfig.clothingId;
+        }
+        if (item.layerType === 'avatar_hat') return item.id === state.avatarConfig.hatId;
+        if (item.layerType === 'avatar_accessory') return item.id === state.avatarConfig.accessoryId;
         if (item.layerType === 'avatar_hand') return item.id === state.avatarConfig.handRigId;
-        if (item.layerType === 'avatar_clothing') return item.id === state.avatarConfig.clothingId;
         return false;
       }
       case 'Companion':
@@ -280,18 +365,19 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
       console.warn('[InspectorDrawer] onSave is not provided; skipping save');
       return;
     }
+    const saveSnapshotDirtyCount = state.dirtyCount;
     setIsSaving(true);
     try {
       await onSave();
-      // Only mark clean after a successful save
-      dispatch({ type: 'MARK_CLEAN' });
+      // Only mark clean if no newer edits occurred during the save operation
+      dispatch({ type: 'MARK_CLEAN', dirtyCount: saveSnapshotDirtyCount });
     } catch (err) {
       // Save failed — keep isDirty true so the user knows to retry
       console.error('[InspectorDrawer] Save failed:', err);
     } finally {
       setIsSaving(false);
     }
-  }, [onSave, dispatch]);
+  }, [onSave, state.dirtyCount, dispatch]);
 
   return (
     <>
@@ -327,6 +413,26 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
           role="tabpanel"
           aria-label={`${activeTab} assets`}
         >
+          {activeTab === 'Avatar' && (
+            <div className="flex gap-1 overflow-x-auto px-3 pb-2 mb-2 border-b border-slate-800 scrollbar-none">
+              {AVATAR_SUBCATEGORIES.map((sub) => (
+                <button
+                  key={sub}
+                  type="button"
+                  onClick={() => setAvatarSubcategory(sub)}
+                  className={clsx(
+                    'rounded-full px-2.5 py-0.5 text-[11px] font-medium whitespace-nowrap transition-colors',
+                    avatarSubcategory === sub
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-700',
+                  )}
+                >
+                  {sub}
+                </button>
+              ))}
+            </div>
+          )}
+
           <AssetGrid
             items={filteredItems}
             getIsSelected={getIsSelected}

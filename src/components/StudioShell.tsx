@@ -15,8 +15,9 @@
  */
 
 import type React from 'react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
+import type Konva from 'konva';
 import { useAuth } from '../auth/AuthProvider';
 import { supabase } from '@/lib/supabase';
 import { CanvasProvider } from '../store/CanvasProvider';
@@ -24,6 +25,7 @@ import { useCanvasStore } from '../store/canvasStore';
 import { AvatarCanvasStage } from './canvas/AvatarCanvasStage';
 import { InspectorDrawer } from './inspector/InspectorDrawer';
 import type { CosmeticItem, UserCosmeticLoadout } from '../types/avatar';
+import { exportAvatarBadges, downloadBadgeBlob, preloadImages } from '../utils/exportBadge';
 
 // ──────────────────────────────────────────────
 // Catalog loader (inner — needs CanvasProvider in tree)
@@ -31,10 +33,8 @@ import type { CosmeticItem, UserCosmeticLoadout } from '../types/avatar';
 
 /**
  * CatalogLoader lives inside CanvasProvider so it can dispatch SET_CATALOG.
- * It fetches all cosmetic_items from the hub schema. Catalog items are public
- * per the hub.cosmetic_items_public_read RLS policy; tracking session user ID
- * ensures any session change re-runs the fetch lifecycle if catalog visibility
- * becomes user-gated in the future (Devin ANALYSIS_0001).
+ * It queries both universal catalog.assets for Kenney modular assets and
+ * hub.cosmetic_items for existing items, providing full cross-game catalog integration.
  */
 const CatalogLoader: React.FC<{ userId?: string }> = ({ userId }) => {
   const { dispatch } = useCanvasStore();
@@ -43,18 +43,53 @@ const CatalogLoader: React.FC<{ userId?: string }> = ({ userId }) => {
     let cancelled = false;
 
     async function fetchCatalog() {
-      const { data, error } = await supabase
+      // 1. Fetch from catalog.assets for Kenney modular assets
+      const { data: catalogData, error: catalogError } = await supabase
+        .schema('catalog')
+        .from('assets')
+        .select('id, category, asset_key, cdn_url, metadata')
+        .in('app_scope', ['all', 'avatar-studio']);
+
+      if (catalogError) {
+        console.warn('[CatalogLoader] Failed to fetch catalog.assets:', catalogError.message);
+      }
+
+      // 2. Fetch from hub.cosmetic_items for legacy/hub assets
+      const { data: hubData, error: hubError } = await supabase
         .schema('hub')
         .from('cosmetic_items')
         .select('id, layer_type, name, asset_url, rarity, metadata');
 
-      if (error) {
-        console.error('[CatalogLoader] Failed to fetch cosmetic catalog:', error.message);
-        return;
+      if (hubError) {
+        console.warn('[CatalogLoader] Failed to fetch hub.cosmetic_items:', hubError.message);
       }
-      if (cancelled || !data) return;
 
-      type CatalogRow = {
+      if (cancelled) return;
+      if (!catalogData && !hubData) return;
+
+      type CatalogAssetRow = {
+        id: string;
+        category: string;
+        asset_key: string;
+        cdn_url: string;
+        metadata: Record<string, unknown> | null;
+      };
+
+      const catalogItems: CosmeticItem[] = (
+        (catalogData as CatalogAssetRow[] | null) ?? []
+      ).map((row) => ({
+        id: row.id,
+        layerType: row.category as CosmeticItem['layerType'],
+        name:
+          (row.metadata?.name as string) ||
+          (row.metadata?.layer as string) ||
+          row.asset_key.replace(/^avatar-/, '').replace(/-/g, ' '),
+        assetUrl: row.cdn_url,
+        rarity: ((row.metadata?.rarity as string) ?? 'standard') as CosmeticItem['rarity'],
+        metadata: (row.metadata ?? {}) as Record<string, unknown>,
+      }));
+
+      type HubCatalogRow = {
         id: string;
         layer_type: string;
         name: string;
@@ -63,16 +98,28 @@ const CatalogLoader: React.FC<{ userId?: string }> = ({ userId }) => {
         metadata: Record<string, unknown> | null;
       };
 
-      const items: CosmeticItem[] = (data as CatalogRow[]).map((row) => ({
-        id: row.id as string,
+      const hubItems: CosmeticItem[] = (
+        (hubData as HubCatalogRow[] | null) ?? []
+      ).map((row) => ({
+        id: row.id,
         layerType: row.layer_type as CosmeticItem['layerType'],
-        name: row.name as string,
-        assetUrl: row.asset_url as string,
+        name: row.name,
+        assetUrl: row.asset_url,
         rarity: (row.rarity ?? 'standard') as CosmeticItem['rarity'],
         metadata: (row.metadata ?? {}) as Record<string, unknown>,
       }));
 
-      dispatch({ type: 'SET_CATALOG', items });
+      const itemMap = new Map<string, CosmeticItem>();
+      for (const item of catalogItems) {
+        itemMap.set(item.id, item);
+      }
+      for (const item of hubItems) {
+        if (!itemMap.has(item.id)) {
+          itemMap.set(item.id, item);
+        }
+      }
+
+      dispatch({ type: 'SET_CATALOG', items: Array.from(itemMap.values()) });
     }
 
     void fetchCatalog();
@@ -95,6 +142,7 @@ interface StudioEditorProps {
 const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
   const { state, dispatch } = useCanvasStore();
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const stageRef = useRef<Konva.Stage | null>(null);
 
   // Load authenticated user's persisted loadout on sign-in, reset on sign-out (Devin BUG_0002)
   useEffect(() => {
@@ -149,10 +197,42 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
    * Save handler:
    * Only provided when user is authenticated. In guest mode, onSave is undefined
    * so clicking save does not mark the editor clean (Devin BUG_0001).
+   * Generates 128×128 and 512×512 WebP badges for universal profile consumption.
    * Awaits Supabase upsert and checks error before resolving.
    */
   const handleSave = session
     ? async () => {
+        let chip = '';
+        let profile = '';
+        if (stageRef.current) {
+          try {
+            // Preload all active images so placeholders are never captured into badges
+            const activeUrls = [
+              state.catalogIndex[state.backgroundId]?.assetUrl,
+              state.catalogIndex[state.landscapeConfig.landscapeId]?.assetUrl,
+              state.catalogIndex[state.avatarConfig.silhouetteId]?.assetUrl,
+              state.avatarConfig.eyesId ? state.catalogIndex[state.avatarConfig.eyesId]?.assetUrl : undefined,
+              state.avatarConfig.mouthId ? state.catalogIndex[state.avatarConfig.mouthId]?.assetUrl : undefined,
+              state.avatarConfig.hairId ? state.catalogIndex[state.avatarConfig.hairId]?.assetUrl : undefined,
+              state.avatarConfig.clothingId ? state.catalogIndex[state.avatarConfig.clothingId]?.assetUrl : undefined,
+              state.avatarConfig.hatId ? state.catalogIndex[state.avatarConfig.hatId]?.assetUrl : undefined,
+              state.avatarConfig.accessoryId ? state.catalogIndex[state.avatarConfig.accessoryId]?.assetUrl : undefined,
+              state.avatarConfig.handRigId ? state.catalogIndex[state.avatarConfig.handRigId]?.assetUrl : undefined,
+              ...state.critters.map((c) => state.catalogIndex[c.critterId]?.assetUrl),
+              state.catalogIndex[state.frameId]?.assetUrl,
+            ];
+            await preloadImages(activeUrls);
+            stageRef.current.batchDraw();
+
+            const badges = await exportAvatarBadges(stageRef.current);
+            chip = badges.dataUrl128;
+            profile = badges.dataUrl512;
+          } catch (badgeErr) {
+            console.error('[StudioEditor] Badge export failed during save:', badgeErr);
+            throw new Error('Failed to generate avatar badges. Aborting save to prevent data corruption.');
+          }
+        }
+
         const loadoutPayload = {
           userId: session.user.id,
           frameId: state.frameId,
@@ -161,8 +241,8 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
           critters: state.critters,
           landscapeConfig: state.landscapeConfig,
           renderUrls: {
-            chip: '',
-            profile: '',
+            chip,
+            profile,
             landscape: '',
             version: Date.now(),
           },
@@ -184,6 +264,40 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
       }
     : undefined;
 
+  /**
+   * Standalone badge export for user profile downloading.
+   */
+  const handleExportBadge = async (size: 128 | 512) => {
+    if (!stageRef.current) return;
+    try {
+      const activeUrls = [
+        state.catalogIndex[state.backgroundId]?.assetUrl,
+        state.catalogIndex[state.landscapeConfig.landscapeId]?.assetUrl,
+        state.catalogIndex[state.avatarConfig.silhouetteId]?.assetUrl,
+        state.avatarConfig.eyesId ? state.catalogIndex[state.avatarConfig.eyesId]?.assetUrl : undefined,
+        state.avatarConfig.mouthId ? state.catalogIndex[state.avatarConfig.mouthId]?.assetUrl : undefined,
+        state.avatarConfig.hairId ? state.catalogIndex[state.avatarConfig.hairId]?.assetUrl : undefined,
+        state.avatarConfig.clothingId ? state.catalogIndex[state.avatarConfig.clothingId]?.assetUrl : undefined,
+        state.avatarConfig.hatId ? state.catalogIndex[state.avatarConfig.hatId]?.assetUrl : undefined,
+        state.avatarConfig.accessoryId ? state.catalogIndex[state.avatarConfig.accessoryId]?.assetUrl : undefined,
+        state.avatarConfig.handRigId ? state.catalogIndex[state.avatarConfig.handRigId]?.assetUrl : undefined,
+        ...state.critters.map((c) => state.catalogIndex[c.critterId]?.assetUrl),
+        state.catalogIndex[state.frameId]?.assetUrl,
+      ];
+      await preloadImages(activeUrls);
+      stageRef.current.batchDraw();
+
+      const badges = await exportAvatarBadges(stageRef.current);
+      if (size === 128) {
+        downloadBadgeBlob(badges.blob128, 'avatar-badge-128x128.webp');
+      } else {
+        downloadBadgeBlob(badges.blob512, 'avatar-badge-512x512.webp');
+      }
+    } catch (err) {
+      console.error('[StudioEditor] Failed to export badge:', err);
+    }
+  };
+
   return (
     <>
       <CatalogLoader userId={session?.user?.id} />
@@ -196,6 +310,26 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
           </span>
 
           <div className="flex items-center gap-3">
+            {/* Export Badges buttons */}
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => void handleExportBadge(128)}
+                className="rounded border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-200 hover:bg-slate-700 hover:text-white transition-colors"
+                title="Export flattened 128×128 WebP badge"
+              >
+                Export 128px
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleExportBadge(512)}
+                className="rounded border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-200 hover:bg-slate-700 hover:text-white transition-colors"
+                title="Export high-resolution 512×512 WebP badge"
+              >
+                Export 512px
+              </button>
+            </div>
+
             {/* Mobile drawer toggle */}
             <button
               type="button"
@@ -240,7 +374,7 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
         {/* Editor area: canvas + inspector side-by-side on desktop */}
         <div className="relative flex flex-1 overflow-hidden">
           <main className="flex flex-1 overflow-hidden">
-            <AvatarCanvasStage />
+            <AvatarCanvasStage stageRef={stageRef} />
           </main>
 
           <InspectorDrawer

@@ -18,10 +18,18 @@
 /** The six atomic layer types tracked in the cosmetic catalog. */
 export type CosmeticLayerType =
   | 'frame'
+  | 'avatar_frame'
   | 'background'
   | 'avatar_body'
-  | 'avatar_hand'
+  | 'avatar_base'
+  | 'avatar_eyes'
+  | 'avatar_mouth'
+  | 'avatar_hair'
   | 'avatar_clothing'
+  | 'avatar_outfit'
+  | 'avatar_hat'
+  | 'avatar_accessory'
+  | 'avatar_hand'
   | 'critter'
   | 'landscape';
 
@@ -67,7 +75,7 @@ export interface CosmeticItem {
 
 /** User avatar body + hand-rig + clothing composite configuration. */
 export interface AvatarConfig {
-  /** Selected body silhouette asset ID. */
+  /** Selected body silhouette asset ID / base ID. */
   silhouetteId: string;
 
   /** Optional hand-rig accessory asset ID. */
@@ -78,6 +86,21 @@ export interface AvatarConfig {
 
   /** Optional clothing / garment overlay asset ID. */
   clothingId?: string;
+
+  /** Optional modular eyes asset ID. */
+  eyesId?: string;
+
+  /** Optional modular mouth asset ID. */
+  mouthId?: string;
+
+  /** Optional modular hair asset ID. */
+  hairId?: string;
+
+  /** Optional modular hat asset ID. */
+  hatId?: string;
+
+  /** Optional modular glasses / accessory asset ID. */
+  accessoryId?: string;
 }
 
 // ──────────────────────────────────────────────
