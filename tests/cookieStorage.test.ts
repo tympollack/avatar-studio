@@ -10,6 +10,7 @@ import {
   BASE64_PREFIX,
   MAX_CHUNK_SIZE,
   SSO_DOMAIN,
+  shouldEnforceSecureCookie,
 } from '../src/lib/cookieStorage';
 
 describe('cookieStorage', () => {
@@ -328,6 +329,73 @@ describe('cookieStorage', () => {
       storage.removeItem('sb-token');
       expect(storage.getItem('sb-token')).toBeNull();
       expect(cookieJar.length).toBe(0);
+    });
+
+    it('preserves valid host-only chunked sessions on first read without deleting them', () => {
+      const storage = createCookieStorage();
+      const sessionPayload = {
+        access_token: 'chunked_access_token_123',
+        user: { id: 'alice' },
+        expires_at: 5000,
+      };
+      const sessionJson = JSON.stringify(sessionPayload);
+      const encoded = `${BASE64_PREFIX}${stringToBase64URL(sessionJson)}`;
+
+      // Split into two host-only chunks (no domain attribute)
+      const mid = Math.floor(encoded.length / 2);
+      const chunk0 = encoded.slice(0, mid);
+      const chunk1 = encoded.slice(mid);
+
+      cookieJar.push({ name: 'sb-chunked.0', value: chunk0, path: '/' });
+      cookieJar.push({ name: 'sb-chunked.1', value: chunk1, path: '/' });
+
+      // First read: must NOT count chunk.0 and chunk.1 as duplicates and must NOT expire them
+      const readVal = storage.getItem('sb-chunked');
+      expect(readVal).toBe(sessionJson);
+
+      // Verify host-only chunks remain in the jar
+      expect(cookieJar.some((e) => e.name === 'sb-chunked.0')).toBe(true);
+      expect(cookieJar.some((e) => e.name === 'sb-chunked.1')).toBe(true);
+    });
+
+    describe('Secure Cookie Enforcement', () => {
+      it('enforces secure flag on SunShade domains even if protocol is http', () => {
+        (global as any).window.location = {
+          hostname: 'avatar.sunshade.icu',
+          protocol: 'http:',
+        };
+        expect(shouldEnforceSecureCookie()).toBe(true);
+      });
+
+      it('enforces secure flag on any HTTPS connection', () => {
+        (global as any).window.location = {
+          hostname: 'example.com',
+          protocol: 'https:',
+        };
+        expect(shouldEnforceSecureCookie()).toBe(true);
+      });
+
+      it('allows non-secure cookie on non-localhost remote domains over http so browsers retain sessions', () => {
+        (global as any).window.location = {
+          hostname: 'staging.internal.network',
+          protocol: 'http:',
+        };
+        expect(shouldEnforceSecureCookie()).toBe(false);
+      });
+
+      it('allows non-secure cookie on localhost over http for local development', () => {
+        (global as any).window.location = {
+          hostname: 'localhost',
+          protocol: 'http:',
+        };
+        expect(shouldEnforceSecureCookie()).toBe(false);
+
+        (global as any).window.location = {
+          hostname: '127.0.0.1',
+          protocol: 'http:',
+        };
+        expect(shouldEnforceSecureCookie()).toBe(false);
+      });
     });
   });
 

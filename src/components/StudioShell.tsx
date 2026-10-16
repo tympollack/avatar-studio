@@ -21,11 +21,18 @@ import type Konva from 'konva';
 import { useAuth } from '../auth/AuthProvider';
 import { supabase } from '@/lib/supabase';
 import { CanvasProvider } from '../store/CanvasProvider';
+import type { CanvasState } from '../store/canvasStore';
 import { useCanvasStore } from '../store/canvasStore';
 import { AvatarCanvasStage } from './canvas/AvatarCanvasStage';
 import { InspectorDrawer } from './inspector/InspectorDrawer';
 import type { CosmeticItem, UserCosmeticLoadout } from '../types/avatar';
-import { exportAvatarBadges, downloadBadgeBlob, preloadImages } from '../utils/exportBadge';
+import { normalizeLayerType } from '../types/avatar';
+import {
+  exportAvatarBadges,
+  downloadBadgeBlob,
+  preloadImages,
+  waitForStageReadiness,
+} from '../utils/exportBadge';
 
 // ──────────────────────────────────────────────
 // Catalog loader (inner — needs CanvasProvider in tree)
@@ -79,7 +86,7 @@ const CatalogLoader: React.FC<{ userId?: string }> = ({ userId }) => {
         (catalogData as CatalogAssetRow[] | null) ?? []
       ).map((row) => ({
         id: row.id,
-        layerType: row.category as CosmeticItem['layerType'],
+        layerType: normalizeLayerType(row.category),
         name:
           (row.metadata?.name as string) ||
           (row.metadata?.layer as string) ||
@@ -102,7 +109,7 @@ const CatalogLoader: React.FC<{ userId?: string }> = ({ userId }) => {
         (hubData as HubCatalogRow[] | null) ?? []
       ).map((row) => ({
         id: row.id,
-        layerType: row.layer_type as CosmeticItem['layerType'],
+        layerType: normalizeLayerType(row.layer_type),
         name: row.name,
         assetUrl: row.asset_url,
         rarity: (row.rarity ?? 'standard') as CosmeticItem['rarity'],
@@ -194,6 +201,42 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
   }, [session?.user?.id, dispatch]);
 
   /**
+   * Resolves active asset URLs and detects any missing catalog items.
+   */
+  const resolveActiveAssetUrls = (currentState: CanvasState) => {
+    const activeSlots: { slot: string; id?: string }[] = [
+      { slot: 'background', id: currentState.backgroundId },
+      { slot: 'landscape', id: currentState.landscapeConfig.landscapeId },
+      { slot: 'silhouette', id: currentState.avatarConfig.silhouetteId },
+      { slot: 'eyes', id: currentState.avatarConfig.eyesId },
+      { slot: 'mouth', id: currentState.avatarConfig.mouthId },
+      { slot: 'hair', id: currentState.avatarConfig.hairId },
+      { slot: 'clothing', id: currentState.avatarConfig.clothingId },
+      { slot: 'hat', id: currentState.avatarConfig.hatId },
+      { slot: 'accessory', id: currentState.avatarConfig.accessoryId },
+      { slot: 'handRig', id: currentState.avatarConfig.handRigId },
+      ...currentState.critters.map((c, idx) => ({ slot: `critter_${idx}`, id: c.critterId })),
+      { slot: 'frame', id: currentState.frameId },
+    ];
+
+    const urls: string[] = [];
+    const missingAssetIds: string[] = [];
+
+    for (const { slot, id } of activeSlots) {
+      if (id) {
+        const item = currentState.catalogIndex[id];
+        if (!item || !item.assetUrl) {
+          missingAssetIds.push(`${slot}:${id}`);
+        } else {
+          urls.push(item.assetUrl);
+        }
+      }
+    }
+
+    return { urls, missingAssetIds };
+  };
+
+  /**
    * Save handler:
    * Only provided when user is authenticated. In guest mode, onSave is undefined
    * so clicking save does not mark the editor clean (Devin BUG_0001).
@@ -206,23 +249,18 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
         let profile = '';
         if (stageRef.current) {
           try {
+            const { urls: activeUrls, missingAssetIds } = resolveActiveAssetUrls(state);
+            if (missingAssetIds.length > 0) {
+              throw new Error(
+                `Selected assets missing from catalog: [${missingAssetIds.join(', ')}]`
+              );
+            }
+
             // Preload all active images so placeholders are never captured into badges
-            const activeUrls = [
-              state.catalogIndex[state.backgroundId]?.assetUrl,
-              state.catalogIndex[state.landscapeConfig.landscapeId]?.assetUrl,
-              state.catalogIndex[state.avatarConfig.silhouetteId]?.assetUrl,
-              state.avatarConfig.eyesId ? state.catalogIndex[state.avatarConfig.eyesId]?.assetUrl : undefined,
-              state.avatarConfig.mouthId ? state.catalogIndex[state.avatarConfig.mouthId]?.assetUrl : undefined,
-              state.avatarConfig.hairId ? state.catalogIndex[state.avatarConfig.hairId]?.assetUrl : undefined,
-              state.avatarConfig.clothingId ? state.catalogIndex[state.avatarConfig.clothingId]?.assetUrl : undefined,
-              state.avatarConfig.hatId ? state.catalogIndex[state.avatarConfig.hatId]?.assetUrl : undefined,
-              state.avatarConfig.accessoryId ? state.catalogIndex[state.avatarConfig.accessoryId]?.assetUrl : undefined,
-              state.avatarConfig.handRigId ? state.catalogIndex[state.avatarConfig.handRigId]?.assetUrl : undefined,
-              ...state.critters.map((c) => state.catalogIndex[c.critterId]?.assetUrl),
-              state.catalogIndex[state.frameId]?.assetUrl,
-            ];
             await preloadImages(activeUrls);
-            stageRef.current.batchDraw();
+
+            // Wait for stage Konva image nodes to commit and draw
+            await waitForStageReadiness(stageRef.current, activeUrls);
 
             const badges = await exportAvatarBadges(stageRef.current);
             chip = badges.dataUrl128;
@@ -270,22 +308,15 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
   const handleExportBadge = async (size: 128 | 512) => {
     if (!stageRef.current) return;
     try {
-      const activeUrls = [
-        state.catalogIndex[state.backgroundId]?.assetUrl,
-        state.catalogIndex[state.landscapeConfig.landscapeId]?.assetUrl,
-        state.catalogIndex[state.avatarConfig.silhouetteId]?.assetUrl,
-        state.avatarConfig.eyesId ? state.catalogIndex[state.avatarConfig.eyesId]?.assetUrl : undefined,
-        state.avatarConfig.mouthId ? state.catalogIndex[state.avatarConfig.mouthId]?.assetUrl : undefined,
-        state.avatarConfig.hairId ? state.catalogIndex[state.avatarConfig.hairId]?.assetUrl : undefined,
-        state.avatarConfig.clothingId ? state.catalogIndex[state.avatarConfig.clothingId]?.assetUrl : undefined,
-        state.avatarConfig.hatId ? state.catalogIndex[state.avatarConfig.hatId]?.assetUrl : undefined,
-        state.avatarConfig.accessoryId ? state.catalogIndex[state.avatarConfig.accessoryId]?.assetUrl : undefined,
-        state.avatarConfig.handRigId ? state.catalogIndex[state.avatarConfig.handRigId]?.assetUrl : undefined,
-        ...state.critters.map((c) => state.catalogIndex[c.critterId]?.assetUrl),
-        state.catalogIndex[state.frameId]?.assetUrl,
-      ];
+      const { urls: activeUrls, missingAssetIds } = resolveActiveAssetUrls(state);
+      if (missingAssetIds.length > 0) {
+        throw new Error(
+          `Selected assets missing from catalog: [${missingAssetIds.join(', ')}]`
+        );
+      }
+
       await preloadImages(activeUrls);
-      stageRef.current.batchDraw();
+      await waitForStageReadiness(stageRef.current, activeUrls);
 
       const badges = await exportAvatarBadges(stageRef.current);
       if (size === 128) {
