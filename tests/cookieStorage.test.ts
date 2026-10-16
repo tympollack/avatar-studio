@@ -375,12 +375,12 @@ describe('cookieStorage', () => {
         expect(shouldEnforceSecureCookie()).toBe(true);
       });
 
-      it('enforces secure flag on non-localhost remote domains over http', () => {
+      it('allows non-secure cookie on non-localhost remote domains over http so browsers retain sessions', () => {
         (global as any).window.location = {
           hostname: 'staging.internal.network',
           protocol: 'http:',
         };
-        expect(shouldEnforceSecureCookie()).toBe(true);
+        expect(shouldEnforceSecureCookie()).toBe(false);
       });
 
       it('allows non-secure cookie on localhost over http for local development', () => {

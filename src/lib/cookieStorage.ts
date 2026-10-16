@@ -251,16 +251,14 @@ export function serializeCookie(
 
 /**
  * Helper to determine whether auth cookies should enforce the Secure attribute.
- * Enforces Secure on SunShade domains (*.sunshade.icu), HTTPS connections,
- * and any non-localhost host to prevent cleartext session transmission.
+ * Enforces Secure on HTTPS connections and authoritative SunShade domains (*.sunshade.icu).
+ * Over plain HTTP preview connections, Secure is omitted so browsers accept and retain sessions.
  */
 export function shouldEnforceSecureCookie(): boolean {
   if (!isBrowser()) return false;
-  if (isSunShadeDomain()) return true;
   if (window.location.protocol === 'https:') return true;
-  const host = window.location.hostname.toLowerCase();
-  const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
-  return !isLocalhost;
+  if (isSunShadeDomain()) return true;
+  return false;
 }
 
 /**

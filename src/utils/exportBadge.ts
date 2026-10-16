@@ -78,50 +78,70 @@ export async function waitForStageReadiness(
     return;
   }
 
-  const startTime = Date.now();
-  const scheduleNext =
-    typeof window !== 'undefined' && typeof requestAnimationFrame !== 'undefined'
-      ? (cb: () => void) => requestAnimationFrame(cb)
-      : (cb: () => void) => setTimeout(cb, 16);
+  let timerId: ReturnType<typeof setTimeout> | undefined;
+  let isDone = false;
 
-  while (Date.now() - startTime < timeoutMs) {
-    const imageNodes = stage.find('Image') as Konva.Image[];
-    const renderedImages = imageNodes
-      .map((node) => node.image())
-      .filter(isLoadedImageElement);
-
-    const renderedSrcs = renderedImages.map((img) => img.src);
-
-    const allPresent = validExpected.every((expected) =>
-      renderedSrcs.some((src) => {
-        if (src === expected || src.endsWith(expected) || expected.endsWith(src)) {
-          return true;
-        }
-        try {
-          const expectedHref = new URL(
-            expected,
-            typeof window !== 'undefined' ? window.location.href : 'http://localhost'
-          ).href;
-          return src === expectedHref;
-        } catch {
-          return false;
-        }
-      })
-    );
-
-    if (allPresent) {
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timerId = setTimeout(() => {
+      isDone = true;
       stage.batchDraw();
-      return;
+      reject(
+        new Error(
+          'Timed out waiting for avatar canvas stage image nodes to commit and draw active assets.'
+        )
+      );
+    }, timeoutMs);
+  });
+
+  const pollPromise = new Promise<void>((resolve) => {
+    const check = () => {
+      if (isDone) return;
+
+      const imageNodes = stage.find('Image') as Konva.Image[];
+      const renderedImages = imageNodes
+        .map((node) => node.image())
+        .filter(isLoadedImageElement);
+
+      const renderedSrcs = renderedImages.map((img) => img.src);
+
+      const allPresent = validExpected.every((expected) =>
+        renderedSrcs.some((src) => {
+          if (src === expected || src.endsWith(expected) || expected.endsWith(src)) {
+            return true;
+          }
+          try {
+            const expectedHref = new URL(
+              expected,
+              typeof window !== 'undefined' ? window.location.href : 'http://localhost'
+            ).href;
+            return src === expectedHref;
+          } catch {
+            return false;
+          }
+        })
+      );
+
+      if (allPresent) {
+        isDone = true;
+        stage.batchDraw();
+        resolve();
+        return;
+      }
+
+      // Schedule next check via setTimeout to continue running even in backgrounded tabs
+      setTimeout(check, 16);
+    };
+
+    check();
+  });
+
+  try {
+    await Promise.race([pollPromise, timeoutPromise]);
+  } finally {
+    if (timerId !== undefined) {
+      clearTimeout(timerId);
     }
-
-    await new Promise<void>((resolve) => scheduleNext(resolve));
   }
-
-  // Final draw attempt
-  stage.batchDraw();
-  throw new Error(
-    'Timed out waiting for avatar canvas stage image nodes to commit and draw active assets.'
-  );
 }
 
 /**
