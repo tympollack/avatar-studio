@@ -27,6 +27,7 @@ import { RGB as RGBFilter } from 'konva/lib/filters/RGB';
 import { useCanvasStore } from '../../store/canvasStore';
 import { CritterAnchorLayer } from './CritterAnchorLayer';
 import { clampNormalized } from '../../utils/coordinateMath';
+import { getCachedImage, loadImage } from '../../utils/imageCache';
 
 // ──────────────────────────────────────────────
 // Virtual canvas constants
@@ -56,21 +57,30 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
 // ──────────────────────────────────────────────
 
 function useImage(url: string | undefined): HTMLImageElement | null {
-  const [img, setImg] = useState<HTMLImageElement | null>(null);
+  const [img, setImg] = useState<HTMLImageElement | null>(() => getCachedImage(url));
 
   useEffect(() => {
     if (!url) {
       setImg(null);
       return;
     }
-    const el = new window.Image();
-    el.crossOrigin = 'anonymous';
-    el.onload = () => setImg(el);
-    el.onerror = () => setImg(null);
-    el.src = url;
+    const cached = getCachedImage(url);
+    if (cached) {
+      setImg(cached);
+      return;
+    }
+
+    let active = true;
+    loadImage(url)
+      .then((loaded) => {
+        if (active) setImg(loaded);
+      })
+      .catch(() => {
+        if (active) setImg(null);
+      });
+
     return () => {
-      el.onload = null;
-      el.onerror = null;
+      active = false;
     };
   }, [url]);
 
@@ -181,6 +191,7 @@ const AssetImageLayer: React.FC<AssetImageLayerProps> = ({
   return (
     <KonvaImage
       ref={nodeRef}
+      name={assetUrl ? `asset-image:${assetUrl}` : 'asset-image'}
       image={img}
       x={0}
       y={0}

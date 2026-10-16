@@ -51,23 +51,76 @@ function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, quality: numb
   });
 }
 
+export { preloadImages } from './imageCache';
+
 /**
- * Ensures all requested asset image URLs are fully loaded into browser cache before rasterization.
- * Rejects if any image URL fails to load, preventing incomplete or placeholder renders from being persisted.
+ * Waits for React and Konva to commit all expected image nodes to the stage and confirms
+ * that every active image bitmap is fully loaded and drawn before canvas export.
+ * Prevents capturing blank/placeholder layers or stale assets during rapid switching.
  */
-export async function preloadImages(urls: (string | undefined)[]): Promise<void> {
-  const validUrls = Array.from(new Set(urls.filter((url): url is string => Boolean(url))));
-  await Promise.all(
-    validUrls.map(
-      (url) =>
-        new Promise<void>((resolve, reject) => {
-          const img = new Image();
-          img.crossOrigin = 'anonymous';
-          img.onload = () => resolve();
-          img.onerror = () => reject(new Error(`Failed to load asset image: ${url}`));
-          img.src = url;
-        }),
-    ),
+function isLoadedImageElement(source: CanvasImageSource | undefined): source is HTMLImageElement {
+  if (!source) return false;
+  if (typeof HTMLImageElement !== 'undefined' && source instanceof HTMLImageElement) {
+    return source.complete && source.naturalWidth > 0;
+  }
+  const duck = source as { complete?: boolean; naturalWidth?: number; src?: string };
+  return Boolean(duck.src && duck.complete !== false && (duck.naturalWidth === undefined || duck.naturalWidth > 0));
+}
+
+export async function waitForStageReadiness(
+  stage: Konva.Stage,
+  expectedUrls: string[],
+  timeoutMs = 3000,
+): Promise<void> {
+  const validExpected = Array.from(new Set(expectedUrls.filter((url): url is string => Boolean(url))));
+  if (validExpected.length === 0) {
+    stage.batchDraw();
+    return;
+  }
+
+  const startTime = Date.now();
+  const scheduleNext =
+    typeof window !== 'undefined' && typeof requestAnimationFrame !== 'undefined'
+      ? (cb: () => void) => requestAnimationFrame(cb)
+      : (cb: () => void) => setTimeout(cb, 16);
+
+  while (Date.now() - startTime < timeoutMs) {
+    const imageNodes = stage.find('Image') as Konva.Image[];
+    const renderedImages = imageNodes
+      .map((node) => node.image())
+      .filter(isLoadedImageElement);
+
+    const renderedSrcs = renderedImages.map((img) => img.src);
+
+    const allPresent = validExpected.every((expected) =>
+      renderedSrcs.some((src) => {
+        if (src === expected || src.endsWith(expected) || expected.endsWith(src)) {
+          return true;
+        }
+        try {
+          const expectedHref = new URL(
+            expected,
+            typeof window !== 'undefined' ? window.location.href : 'http://localhost'
+          ).href;
+          return src === expectedHref;
+        } catch {
+          return false;
+        }
+      })
+    );
+
+    if (allPresent) {
+      stage.batchDraw();
+      return;
+    }
+
+    await new Promise<void>((resolve) => scheduleNext(resolve));
+  }
+
+  // Final draw attempt
+  stage.batchDraw();
+  throw new Error(
+    'Timed out waiting for avatar canvas stage image nodes to commit and draw active assets.'
   );
 }
 

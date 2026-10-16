@@ -18,6 +18,7 @@ import { Layer, Image as KonvaImage, Group } from 'react-konva';
 import type { CritterConfig, CosmeticItem } from '../../types/avatar';
 import type { NormalizedCoord } from '../../utils/coordinateMath';
 import { resolvePerchPixel, clampNormalized, VIRTUAL_CANVAS_SIZE } from '../../utils/coordinateMath';
+import { getCachedImage, loadImage } from '../../utils/imageCache';
 
 // ──────────────────────────────────────────────
 // Constants
@@ -40,16 +41,33 @@ const BOB_FREQ = 0.0015; // radians per millisecond
 // ──────────────────────────────────────────────
 
 function useCritterImage(url: string | undefined): HTMLImageElement | null {
-  const [img, setImg] = useState<HTMLImageElement | null>(null);
+  const [img, setImg] = useState<HTMLImageElement | null>(() => getCachedImage(url));
+
   useEffect(() => {
-    if (!url) { setImg(null); return; }
-    const el = new window.Image();
-    el.crossOrigin = 'anonymous';
-    el.onload = () => setImg(el);
-    el.onerror = () => setImg(null);
-    el.src = url;
-    return () => { el.onload = null; el.onerror = null; };
+    if (!url) {
+      setImg(null);
+      return;
+    }
+    const cached = getCachedImage(url);
+    if (cached) {
+      setImg(cached);
+      return;
+    }
+
+    let active = true;
+    loadImage(url)
+      .then((loaded) => {
+        if (active) setImg(loaded);
+      })
+      .catch(() => {
+        if (active) setImg(null);
+      });
+
+    return () => {
+      active = false;
+    };
   }, [url]);
+
   return img;
 }
 
@@ -107,6 +125,7 @@ const AnimatedCritter: React.FC<AnimatedCritterProps> = ({
   return (
     <Group x={pixel.x - critterSize / 2 + collisionShiftX} y={pixel.y - critterSize / 2 + bobY}>
       <KonvaImage
+        name={item?.assetUrl ? `asset-image:${item.assetUrl}` : 'asset-image'}
         image={img}
         width={critterSize}
         height={critterSize}
