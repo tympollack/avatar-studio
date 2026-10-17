@@ -34,6 +34,8 @@ export interface CanvasState {
   landscapeConfig: LandscapeConfig;
   /** Whether any unsaved changes exist since last save. */
   isDirty: boolean;
+  /** Monotonic counter incremented on each mutation to detect concurrent mid-save edits. */
+  dirtyCount: number;
   /** Catalog items indexed by their ID for O(1) lookup. */
   catalogIndex: Record<string, CosmeticItem>;
 }
@@ -50,6 +52,7 @@ export const defaultCanvasState: CanvasState = {
     theme: 'day',
   },
   isDirty: false,
+  dirtyCount: 0,
   catalogIndex: {},
 };
 
@@ -67,29 +70,46 @@ export type CanvasAction =
   | { type: 'SET_CATALOG'; items: CosmeticItem[] }
   | { type: 'LOAD_SAVED_LOADOUT'; loadout: Partial<CanvasState> }
   | { type: 'RESET_LOADOUT' }
-  | { type: 'MARK_CLEAN' };
+  | { type: 'MARK_CLEAN'; dirtyCount?: number };
 
 export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasState {
   switch (action.type) {
     case 'SET_FRAME':
-      return { ...state, frameId: action.frameId, isDirty: true };
+      return {
+        ...state,
+        frameId: action.frameId,
+        isDirty: true,
+        dirtyCount: (state.dirtyCount ?? 0) + 1,
+      };
     case 'SET_BACKGROUND':
-      return { ...state, backgroundId: action.backgroundId, isDirty: true };
+      return {
+        ...state,
+        backgroundId: action.backgroundId,
+        isDirty: true,
+        dirtyCount: (state.dirtyCount ?? 0) + 1,
+      };
     case 'SET_BG_THEME':
       return {
         ...state,
         backgroundTheme: action.theme,
         landscapeConfig: { ...state.landscapeConfig, theme: action.theme },
         isDirty: true,
+        dirtyCount: (state.dirtyCount ?? 0) + 1,
       };
     case 'SET_AVATAR_CONFIG':
       return {
         ...state,
         avatarConfig: { ...state.avatarConfig, ...action.config },
         isDirty: true,
+        dirtyCount: (state.dirtyCount ?? 0) + 1,
       };
     case 'SET_CRITTERS':
-      return { ...state, critters: action.critters, isDirty: true };
+      return {
+        ...state,
+        critters: action.critters,
+        isDirty: true,
+        dirtyCount: (state.dirtyCount ?? 0) + 1,
+      };
     case 'SET_LANDSCAPE': {
       const nextLandscape: LandscapeConfig = {
         ...state.landscapeConfig,
@@ -102,6 +122,7 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
         ...state,
         landscapeConfig: nextLandscape,
         isDirty: true,
+        dirtyCount: (state.dirtyCount ?? 0) + 1,
       };
     }
     case 'SET_CATALOG': {
@@ -132,14 +153,22 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
               theme: 'day',
             },
         isDirty: false,
+        dirtyCount: 0,
       };
     case 'RESET_LOADOUT':
       return {
         ...defaultCanvasState,
         catalogIndex: state.catalogIndex,
         isDirty: false,
+        dirtyCount: 0,
       };
     case 'MARK_CLEAN':
+      if (typeof action.dirtyCount === 'number') {
+        if (state.dirtyCount === action.dirtyCount) {
+          return { ...state, isDirty: false };
+        }
+        return state;
+      }
       return { ...state, isDirty: false };
     default:
       return state;

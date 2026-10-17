@@ -16,10 +16,18 @@ import { z } from 'zod';
 
 export const CosmeticLayerTypeSchema = z.enum([
   'frame',
+  'avatar_frame',
   'background',
   'avatar_body',
-  'avatar_hand',
+  'avatar_base',
+  'avatar_eyes',
+  'avatar_mouth',
+  'avatar_hair',
   'avatar_clothing',
+  'avatar_outfit',
+  'avatar_hat',
+  'avatar_accessory',
+  'avatar_hand',
   'critter',
   'landscape',
 ]);
@@ -69,6 +77,11 @@ export const AvatarConfigSchema = z.object({
     .regex(/^#[0-9A-Fa-f]{6}$/, 'Must be a valid hex color (e.g. #FF9900)')
     .optional(),
   clothingId: z.string().min(1).optional(),
+  eyesId: z.string().min(1).optional(),
+  mouthId: z.string().min(1).optional(),
+  hairId: z.string().min(1).optional(),
+  hatId: z.string().min(1).optional(),
+  accessoryId: z.string().min(1).optional(),
 });
 
 // ──────────────────────────────────────────────

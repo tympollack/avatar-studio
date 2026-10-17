@@ -27,6 +27,7 @@ import { RGB as RGBFilter } from 'konva/lib/filters/RGB';
 import { useCanvasStore } from '../../store/canvasStore';
 import { CritterAnchorLayer } from './CritterAnchorLayer';
 import { clampNormalized } from '../../utils/coordinateMath';
+import { getCachedImage, loadImage } from '../../utils/imageCache';
 
 // ──────────────────────────────────────────────
 // Virtual canvas constants
@@ -56,21 +57,30 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
 // ──────────────────────────────────────────────
 
 function useImage(url: string | undefined): HTMLImageElement | null {
-  const [img, setImg] = useState<HTMLImageElement | null>(null);
+  const [img, setImg] = useState<HTMLImageElement | null>(() => getCachedImage(url));
 
   useEffect(() => {
     if (!url) {
       setImg(null);
       return;
     }
-    const el = new window.Image();
-    el.crossOrigin = 'anonymous';
-    el.onload = () => setImg(el);
-    el.onerror = () => setImg(null);
-    el.src = url;
+    const cached = getCachedImage(url);
+    if (cached) {
+      setImg(cached);
+      return;
+    }
+
+    let active = true;
+    loadImage(url)
+      .then((loaded) => {
+        if (active) setImg(loaded);
+      })
+      .catch(() => {
+        if (active) setImg(null);
+      });
+
     return () => {
-      el.onload = null;
-      el.onerror = null;
+      active = false;
     };
   }, [url]);
 
@@ -181,6 +191,7 @@ const AssetImageLayer: React.FC<AssetImageLayerProps> = ({
   return (
     <KonvaImage
       ref={nodeRef}
+      name={assetUrl ? `asset-image:${assetUrl}` : 'asset-image'}
       image={img}
       x={0}
       y={0}
@@ -195,9 +206,16 @@ const AssetImageLayer: React.FC<AssetImageLayerProps> = ({
 // Main Stage
 // ──────────────────────────────────────────────
 
-export const AvatarCanvasStage: React.FC = () => {
+export interface AvatarCanvasStageProps {
+  stageRef?: React.RefObject<Konva.Stage | null>;
+}
+
+export const AvatarCanvasStage: React.FC<AvatarCanvasStageProps> = ({
+  stageRef: externalStageRef,
+}) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const stageRef = useRef<Konva.Stage>(null);
+  const internalStageRef = useRef<Konva.Stage | null>(null);
+  const stageRef = externalStageRef ?? internalStageRef;
 
   const { state } = useCanvasStore();
   const { avatarConfig, catalogIndex, landscapeConfig, backgroundId, frameId } = state;
@@ -245,7 +263,7 @@ export const AvatarCanvasStage: React.FC = () => {
       x: pointer.x - mousePointTo.x * newZoom,
       y: pointer.y - mousePointTo.y * newZoom,
     });
-  }, []);
+  }, [stageRef]);
 
   // ── Asset URL resolution ───────────────────
   const bgItem = catalogIndex[backgroundId];
@@ -253,8 +271,23 @@ export const AvatarCanvasStage: React.FC = () => {
   const silhouetteItem = avatarConfig.silhouetteId
     ? catalogIndex[avatarConfig.silhouetteId]
     : undefined;
+  const eyesItem = avatarConfig.eyesId
+    ? catalogIndex[avatarConfig.eyesId]
+    : undefined;
+  const mouthItem = avatarConfig.mouthId
+    ? catalogIndex[avatarConfig.mouthId]
+    : undefined;
+  const hairItem = avatarConfig.hairId
+    ? catalogIndex[avatarConfig.hairId]
+    : undefined;
   const clothingItem = avatarConfig.clothingId
     ? catalogIndex[avatarConfig.clothingId]
+    : undefined;
+  const hatItem = avatarConfig.hatId
+    ? catalogIndex[avatarConfig.hatId]
+    : undefined;
+  const accessoryItem = avatarConfig.accessoryId
+    ? catalogIndex[avatarConfig.accessoryId]
     : undefined;
   const handRigItem = avatarConfig.handRigId
     ? catalogIndex[avatarConfig.handRigId]
@@ -280,7 +313,7 @@ export const AvatarCanvasStage: React.FC = () => {
       aria-label="Avatar canvas stage"
     >
       <Stage
-        ref={stageRef}
+        ref={stageRef as unknown as React.RefObject<Konva.Stage>}
         width={canvasSize}
         height={canvasSize}
         scaleX={zoom}
@@ -310,26 +343,76 @@ export const AvatarCanvasStage: React.FC = () => {
           />
         </Layer>
 
-        {/* ── Layer 3: Avatar translated by anchor offset ── */}
+        {/* ── Layer 3: Ordered Modular Avatar (Kenney Character Specification) ── */}
         <Layer name="avatar">
           <Group x={anchorOffsetPx.x} y={anchorOffsetPx.y}>
-            {/* Silhouette base — tinted via Konva RGBA filter */}
+            {/* 1. Base Body silhouette — tinted via Konva RGBA filter */}
             <AssetImageLayer
               assetUrl={silhouetteItem?.assetUrl}
-              placeholderLabel="Avatar Silhouette"
+              placeholderLabel="Avatar Base"
               placeholderFill="#334155"
               size={canvasSize}
               tintColor={avatarConfig.tintColor}
             />
-            {/* Clothing overlay */}
+
+            {/* 2. Eyes overlay */}
+            {eyesItem && (
+              <AssetImageLayer
+                assetUrl={eyesItem.assetUrl}
+                placeholderLabel="Eyes"
+                placeholderFill="#38bdf8"
+                size={canvasSize}
+              />
+            )}
+
+            {/* 3. Mouth overlay */}
+            {mouthItem && (
+              <AssetImageLayer
+                assetUrl={mouthItem.assetUrl}
+                placeholderLabel="Mouth"
+                placeholderFill="#f43f5e"
+                size={canvasSize}
+              />
+            )}
+
+            {/* 4. Hair overlay */}
+            {hairItem && (
+              <AssetImageLayer
+                assetUrl={hairItem.assetUrl}
+                placeholderLabel="Hair"
+                placeholderFill="#d97706"
+                size={canvasSize}
+              />
+            )}
+
+            {/* 5. Garments / Outfit overlay */}
             {clothingItem && (
               <AssetImageLayer
                 assetUrl={clothingItem.assetUrl}
-                placeholderLabel="Clothing"
+                placeholderLabel="Garments"
                 placeholderFill="#475569"
                 size={canvasSize}
               />
             )}
+
+            {/* 6. Hat / Glasses / Accessories */}
+            {hatItem && (
+              <AssetImageLayer
+                assetUrl={hatItem.assetUrl}
+                placeholderLabel="Hat"
+                placeholderFill="#e11d48"
+                size={canvasSize}
+              />
+            )}
+            {accessoryItem && (
+              <AssetImageLayer
+                assetUrl={accessoryItem.assetUrl}
+                placeholderLabel="Accessory"
+                placeholderFill="#6366f1"
+                size={canvasSize}
+              />
+            )}
+
             {/* Hand-rig overlay */}
             {handRigItem && (
               <AssetImageLayer

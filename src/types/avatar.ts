@@ -18,10 +18,18 @@
 /** The six atomic layer types tracked in the cosmetic catalog. */
 export type CosmeticLayerType =
   | 'frame'
+  | 'avatar_frame'
   | 'background'
   | 'avatar_body'
-  | 'avatar_hand'
+  | 'avatar_base'
+  | 'avatar_eyes'
+  | 'avatar_mouth'
+  | 'avatar_hair'
   | 'avatar_clothing'
+  | 'avatar_outfit'
+  | 'avatar_hat'
+  | 'avatar_accessory'
+  | 'avatar_hand'
   | 'critter'
   | 'landscape';
 
@@ -32,6 +40,79 @@ export type CosmeticRarity =
   | 'rare'
   | 'epic'
   | 'legendary';
+
+/**
+ * Normalizes an arbitrary database category/layer_type string (e.g. from catalog.assets or hub.cosmetic_items)
+ * into a recognized atomic CosmeticLayerType matching inspector tabs and renderer layers.
+ */
+export function normalizeLayerType(rawCategory: string | undefined | null): CosmeticLayerType {
+  if (!rawCategory) return 'avatar_base';
+  const clean = rawCategory.toLowerCase().trim().replace(/[- ]/g, '_');
+  switch (clean) {
+    case 'base':
+    case 'avatar_base':
+      return 'avatar_base';
+    case 'body':
+    case 'avatar_body':
+      return 'avatar_body';
+    case 'hair':
+    case 'avatar_hair':
+      return 'avatar_hair';
+    case 'eye':
+    case 'eyes':
+    case 'avatar_eyes':
+      return 'avatar_eyes';
+    case 'mouth':
+    case 'avatar_mouth':
+      return 'avatar_mouth';
+    case 'clothing':
+    case 'garment':
+    case 'garments':
+    case 'avatar_clothing':
+      return 'avatar_clothing';
+    case 'outfit':
+    case 'outfits':
+    case 'avatar_outfit':
+      return 'avatar_outfit';
+    case 'hat':
+    case 'hats':
+    case 'headwear':
+    case 'avatar_hat':
+      return 'avatar_hat';
+    case 'accessory':
+    case 'accessories':
+    case 'avatar_accessory':
+      return 'avatar_accessory';
+    case 'hand':
+    case 'hands':
+    case 'hand_rig':
+    case 'handrig':
+    case 'avatar_hand':
+      return 'avatar_hand';
+    case 'frame':
+    case 'frames':
+    case 'avatar_frame':
+      return 'avatar_frame';
+    case 'background':
+    case 'backgrounds':
+      return 'background';
+    case 'companion':
+    case 'companions':
+    case 'critter':
+    case 'critters':
+      return 'critter';
+    case 'landscape':
+    case 'landscapes':
+    case 'plot':
+    case 'terrain':
+      return 'landscape';
+    default:
+      if (clean.startsWith('avatar_')) {
+        return clean as CosmeticLayerType;
+      }
+      return `avatar_${clean}` as CosmeticLayerType;
+  }
+}
 
 // ──────────────────────────────────────────────
 // Catalog Item
@@ -67,7 +148,7 @@ export interface CosmeticItem {
 
 /** User avatar body + hand-rig + clothing composite configuration. */
 export interface AvatarConfig {
-  /** Selected body silhouette asset ID. */
+  /** Selected body silhouette asset ID / base ID. */
   silhouetteId: string;
 
   /** Optional hand-rig accessory asset ID. */
@@ -78,6 +159,21 @@ export interface AvatarConfig {
 
   /** Optional clothing / garment overlay asset ID. */
   clothingId?: string;
+
+  /** Optional modular eyes asset ID. */
+  eyesId?: string;
+
+  /** Optional modular mouth asset ID. */
+  mouthId?: string;
+
+  /** Optional modular hair asset ID. */
+  hairId?: string;
+
+  /** Optional modular hat asset ID. */
+  hatId?: string;
+
+  /** Optional modular glasses / accessory asset ID. */
+  accessoryId?: string;
 }
 
 // ──────────────────────────────────────────────

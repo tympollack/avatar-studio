@@ -250,6 +250,18 @@ export function serializeCookie(
 }
 
 /**
+ * Helper to determine whether auth cookies should enforce the Secure attribute.
+ * Enforces Secure on HTTPS connections and authoritative SunShade domains (*.sunshade.icu).
+ * Over plain HTTP preview connections, Secure is omitted so browsers accept and retain sessions.
+ */
+export function shouldEnforceSecureCookie(): boolean {
+  if (!isBrowser()) return false;
+  if (window.location.protocol === 'https:') return true;
+  if (isSunShadeDomain()) return true;
+  return false;
+}
+
+/**
  * Expire a host-only cookie by name (without domain attribute).
  */
 export function expireHostOnlyCookie(name: string): void {
@@ -260,7 +272,7 @@ export function expireHostOnlyCookie(name: string): void {
     maxAge: 0,
     expires: new Date(0),
     sameSite: 'Lax' as const,
-    secure: window.location.protocol === 'https:',
+    secure: shouldEnforceSecureCookie(),
   };
 
   document.cookie = serializeCookie(name, '', expireOptions);
@@ -278,7 +290,7 @@ export function expireDomainCookie(name: string): void {
     expires: new Date(0),
     domain: SSO_DOMAIN,
     sameSite: 'Lax' as const,
-    secure: window.location.protocol === 'https:',
+    secure: shouldEnforceSecureCookie(),
   };
 
   document.cookie = serializeCookie(name, '', expireOptions);
@@ -303,17 +315,27 @@ export function createCookieStorage(): SupportedStorage {
       if (!isBrowser()) return null;
 
       // On SunShade domain, proactively migrate and clear any legacy host-only cookies
-      // if duplicate occurrences of this key or chunks are present in document.cookie.
+      // if duplicate occurrences of the exact same cookie name are present in document.cookie.
       if (isSunShadeDomain()) {
         const raw = document.cookie;
         if (raw) {
-          const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const regex = new RegExp(`(?:^|;\\s*)${escapedKey}(?:\\.\\d+)?=`, 'g');
-          const matches = raw.match(regex);
-          if (matches && matches.length > 1) {
+          const nameCounts = new Map<string, number>();
+          for (const part of raw.split('; ')) {
+            const eqIdx = part.indexOf('=');
+            if (eqIdx !== -1) {
+              const name = part.slice(0, eqIdx).trim();
+              nameCounts.set(name, (nameCounts.get(name) || 0) + 1);
+            }
+          }
+
+          // Expire host-only cookie only if that specific cookie name has duplicate entries
+          if ((nameCounts.get(key) || 0) > 1) {
             expireHostOnlyCookie(key);
-            for (let i = 0; i < 10; i++) {
-              expireHostOnlyCookie(`${key}.${i}`);
+          }
+          for (let i = 0; i < 10; i++) {
+            const chunkName = `${key}.${i}`;
+            if ((nameCounts.get(chunkName) || 0) > 1) {
+              expireHostOnlyCookie(chunkName);
             }
           }
         }
@@ -343,7 +365,7 @@ export function createCookieStorage(): SupportedStorage {
     setItem: (key: string, value: string): void => {
       if (!isBrowser()) return;
 
-      const isHttps = window.location.protocol === 'https:';
+      const isSecure = shouldEnforceSecureCookie();
       const onSunShade = isSunShadeDomain();
       const domain = onSunShade ? SSO_DOMAIN : undefined;
 
@@ -379,7 +401,7 @@ export function createCookieStorage(): SupportedStorage {
           maxAge: DEFAULT_MAX_AGE,
           domain,
           sameSite: 'Lax',
-          secure: isHttps,
+          secure: isSecure,
         });
       }
     },
