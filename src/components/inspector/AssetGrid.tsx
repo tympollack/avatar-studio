@@ -49,6 +49,8 @@ const RARITY_GLOW: Record<CosmeticRarity, string> = {
 // Single card
 // ──────────────────────────────────────────────
 
+import { AssetThumbnail } from './AssetThumbnail';
+
 interface AssetCardProps {
   item: CosmeticItem;
   isSelected: boolean;
@@ -72,29 +74,20 @@ const AssetCard: React.FC<AssetCardProps> = ({ item, isSelected, onSelect }) => 
         : 'hover:bg-slate-700',
     )}
   >
-    {/* Thumbnail */}
+    {/* Thumbnail Container */}
     <div className="relative h-14 w-14 overflow-hidden rounded-md bg-slate-900">
-      {item.assetUrl ? (
-        <img
-          src={item.assetUrl}
-          alt={item.name}
-          className="h-full w-full object-cover"
-          loading="lazy"
-          decoding="async"
-        />
-      ) : (
-        <span className="flex h-full w-full items-center justify-center text-xl font-bold text-slate-500">
-          {item.name.charAt(0).toUpperCase()}
-        </span>
-      )}
+      <AssetThumbnail item={item} />
 
-      {/* Active checkmark */}
+      {/* Active checkmark — visible and styled above thumbnail and fallbacks */}
       {isSelected && (
-        <div className="absolute inset-0 flex items-center justify-center rounded-md bg-indigo-600/70">
+        <div
+          data-testid="selection-checkmark"
+          className="absolute inset-0 z-20 flex items-center justify-center rounded-md bg-indigo-600/70 pointer-events-none"
+        >
           <svg
             viewBox="0 0 20 20"
             fill="currentColor"
-            className="h-6 w-6 text-white"
+            className="h-6 w-6 text-white drop-shadow"
             aria-hidden="true"
           >
             <path
