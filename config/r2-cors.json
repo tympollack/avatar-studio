@@ -1,0 +1,24 @@
+[
+  {
+    "AllowedOrigins": [
+      "https://avatar.sunshade.icu",
+      "https://hub.sunshade.icu",
+      "https://cozy.sunshade.icu",
+      "http://localhost:*"
+    ],
+    "AllowedMethods": [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ],
+    "AllowedHeaders": [
+      "*"
+    ],
+    "ExposeHeaders": [
+      "ETag",
+      "Content-Type",
+      "Cache-Control"
+    ],
+    "MaxAgeSeconds": 86400
+  }
+]
