@@ -81,20 +81,23 @@ export function createSanitizedFallbackCanvas(width = 512, height = 512): HTMLCa
 
 /**
  * Safely converts an HTMLCanvasElement to a Data URL, catching any SecurityError (tainted canvas).
+ * Only returns a sanitized fallback badge when `allowFallback` is explicitly true (e.g. for user downloads).
  */
 export function safeCanvasToDataURL(
   canvas: HTMLCanvasElement,
   mimeType = 'image/webp',
-  quality = 0.95
+  quality = 0.95,
+  allowFallback = false
 ): string {
   try {
     return canvas.toDataURL(mimeType, quality);
   } catch (err: unknown) {
     const error = err as Error;
     if (
-      error.name === 'SecurityError' ||
-      error.message?.includes('Tainted canvases') ||
-      error.message?.includes('tainted')
+      allowFallback &&
+      (error.name === 'SecurityError' ||
+        error.message?.includes('Tainted canvases') ||
+        error.message?.includes('tainted'))
     ) {
       console.warn(
         '[exportBadge] Canvas tainted by cross-origin assets during toDataURL. Rendering untainted fallback badge:',
@@ -109,11 +112,13 @@ export function safeCanvasToDataURL(
 
 /**
  * Safely converts an HTMLCanvasElement to a binary Blob, catching any SecurityError (tainted canvas).
+ * Only returns a sanitized fallback blob when `allowFallback` is explicitly true (e.g. for user downloads).
  */
 export function safeCanvasToBlob(
   canvas: HTMLCanvasElement,
   mimeType = 'image/webp',
-  quality = 0.95
+  quality = 0.95,
+  allowFallback = false
 ): Promise<Blob> {
   return new Promise((resolve, reject) => {
     try {
@@ -121,7 +126,7 @@ export function safeCanvasToBlob(
         (blob) => {
           if (blob) {
             resolve(blob);
-          } else {
+          } else if (allowFallback) {
             console.warn('[exportBadge] canvas.toBlob returned null, generating fallback blob');
             const fallback = createSanitizedFallbackCanvas(canvas.width, canvas.height);
             fallback.toBlob(
@@ -129,6 +134,8 @@ export function safeCanvasToBlob(
               mimeType,
               quality
             );
+          } else {
+            reject(new Error('Failed to serialize canvas to blob: canvas.toBlob returned null'));
           }
         },
         mimeType,
@@ -137,9 +144,10 @@ export function safeCanvasToBlob(
     } catch (err: unknown) {
       const error = err as Error;
       if (
-        error.name === 'SecurityError' ||
-        error.message?.includes('Tainted canvases') ||
-        error.message?.includes('tainted')
+        allowFallback &&
+        (error.name === 'SecurityError' ||
+          error.message?.includes('Tainted canvases') ||
+          error.message?.includes('tainted'))
       ) {
         console.warn(
           '[exportBadge] Canvas tainted by cross-origin assets during toBlob. Rendering untainted fallback badge:',
@@ -322,15 +330,17 @@ export async function exportAvatarBadges(
     stage.batchDraw();
   }
 
+  const allowFallback = Boolean(options.allowFallbackOnTainted);
+
   const canvas128 = resampleCanvas(nativeCanvas, 128);
   const canvas512 = resampleCanvas(nativeCanvas, 512);
 
-  const dataUrl128 = safeCanvasToDataURL(canvas128, mimeType, quality);
-  const dataUrl512 = safeCanvasToDataURL(canvas512, mimeType, quality);
+  const dataUrl128 = safeCanvasToDataURL(canvas128, mimeType, quality, allowFallback);
+  const dataUrl512 = safeCanvasToDataURL(canvas512, mimeType, quality, allowFallback);
 
   const [blob128, blob512] = await Promise.all([
-    safeCanvasToBlob(canvas128, mimeType, quality),
-    safeCanvasToBlob(canvas512, mimeType, quality),
+    safeCanvasToBlob(canvas128, mimeType, quality, allowFallback),
+    safeCanvasToBlob(canvas512, mimeType, quality, allowFallback),
   ]);
 
   return {

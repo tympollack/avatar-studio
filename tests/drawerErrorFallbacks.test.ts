@@ -51,7 +51,7 @@ describe('TASK-AVATAR-DRAWER-ERROR-FALLBACKS: Skeleton Loaders & Error Fallbacks
       expect(element.props.item.layerType).toBe('avatar_eyes');
     });
 
-    it('creates thumbnail element with loading skeleton and anonymous crossOrigin when assetUrl exists', () => {
+    it('creates thumbnail element with loading skeleton and lazy loading when assetUrl exists', () => {
       const mockItem: CosmeticItem = {
         id: 'test-hair-1',
         name: 'Curly Brown Hair',

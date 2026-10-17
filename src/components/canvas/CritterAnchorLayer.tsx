@@ -155,11 +155,11 @@ export const CritterAnchorLayer: React.FC<CritterAnchorLayerProps> = ({
 }) => {
   // Guard: empty layer when no critters equipped — no placeholders.
   if (critters.length === 0) {
-    return <Layer name="critter-anchors" />;
+    return <Layer name="critter-anchors" clearBeforeDraw={true} />;
   }
 
   return (
-    <Layer name="critter-anchors">
+    <Layer name="critter-anchors" clearBeforeDraw={true}>
       {critters.map((critter, idx) => {
         const samePerchPrior = critters
           .slice(0, idx)
