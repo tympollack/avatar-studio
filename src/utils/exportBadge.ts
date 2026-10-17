@@ -13,6 +13,7 @@ import type Konva from 'konva';
 export interface BadgeExportOptions {
   mimeType?: 'image/webp' | 'image/png';
   quality?: number;
+  allowFallbackOnTainted?: boolean;
 }
 
 export interface BadgeExportResult {
@@ -305,8 +306,11 @@ export async function exportAvatarBadges(
       nativeCanvas = stage.toCanvas({ pixelRatio: minRequiredRatio });
     } catch (canvasErr: unknown) {
       const err = canvasErr as Error;
+      if (!options.allowFallbackOnTainted) {
+        throw new Error(`Failed to export avatar canvas: ${err.message}`);
+      }
       console.warn(
-        '[exportBadge] stage.toCanvas() failed (likely cross-origin canvas tainting):',
+        '[exportBadge] stage.toCanvas() failed (likely cross-origin canvas tainting), using fallback for download:',
         err.message
       );
       nativeCanvas = createSanitizedFallbackCanvas(512, 512);

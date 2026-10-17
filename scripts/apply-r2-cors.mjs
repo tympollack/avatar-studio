@@ -6,7 +6,7 @@
  * Bucket defaults to 'sunshade-assets' or $R2_BUCKET.
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,12 @@ const CORS_FILE = path.resolve(REPO_ROOT, 'config/r2-cors.json');
 
 const BUCKET = process.env.R2_BUCKET || 'sunshade-assets';
 
+// Validate bucket name to prevent command injection
+if (!/^[a-z0-9._-]+$/i.test(BUCKET)) {
+  console.error(`❌ Invalid R2 bucket name: "${BUCKET}". Must contain only alphanumeric, dot, underscore, or dash characters.`);
+  process.exit(1);
+}
+
 console.log(`⚡ Applying Cloudflare R2 CORS policy to bucket '${BUCKET}' from ${CORS_FILE}...`);
 
 if (!fs.existsSync(CORS_FILE)) {
@@ -26,10 +32,14 @@ if (!fs.existsSync(CORS_FILE)) {
 }
 
 try {
-  const cmd = `npx wrangler r2 bucket cors set "${BUCKET}" --file "${CORS_FILE}" --force`;
-  execSync(cmd, { stdio: 'inherit', cwd: REPO_ROOT });
+  const npxCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+  execFileSync(
+    npxCmd,
+    ['wrangler', 'r2', 'bucket', 'cors', 'set', BUCKET, '--file', CORS_FILE, '--force'],
+    { stdio: 'inherit', cwd: REPO_ROOT }
+  );
   console.log('✅ CORS configuration successfully applied.');
 } catch (err) {
-  console.warn(`⚠️ Could not apply remote R2 CORS via Wrangler directly: ${err.message}`);
-  console.warn('Ensure CLOUDFLARE_API_TOKEN is exported or apply manually via Cloudflare dashboard.');
+  console.error(`❌ Could not apply remote R2 CORS via Wrangler directly: ${err.message}`);
+  process.exit(1);
 }

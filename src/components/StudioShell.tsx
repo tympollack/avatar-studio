@@ -85,8 +85,14 @@ const CatalogLoader: React.FC<CatalogLoaderProps> = ({ userId, onWarning }) => {
 
       if (cancelled) return;
 
-      if (failedToFetchCdn && (!catalogData || catalogData.length === 0)) {
-        onWarning?.('Asset manifest could not be fetched from CDN. Displaying offline fallbacks.');
+      if (failedToFetchCdn) {
+        if (!catalogData && !hubData) {
+          onWarning?.('Asset manifest could not be fetched from CDN. Displaying offline fallbacks.');
+        } else if (hubError && !catalogError) {
+          onWarning?.('Some cosmetic items from Hub could not be loaded.');
+        } else if (catalogError && !hubError) {
+          onWarning?.('Some modular assets from catalog CDN could not be loaded.');
+        }
       }
       if (!catalogData && !hubData) return;
 
@@ -335,7 +341,7 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
       await preloadImages(activeUrls);
       await waitForStageReadiness(stageRef.current, activeUrls);
 
-      const badges = await exportAvatarBadges(stageRef.current);
+      const badges = await exportAvatarBadges(stageRef.current, { allowFallbackOnTainted: true });
       if (size === 128) {
         downloadBadgeBlob(badges.blob128, 'avatar-badge-128x128.webp');
       } else {

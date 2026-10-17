@@ -80,4 +80,16 @@ describe('TASK-AVATAR-R2-CORS-POLICY: Cloudflare R2 CORS and Edge Router', () =>
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://avatar.sunshade.icu');
     expect(response.headers.get('Access-Control-Expose-Headers')).toContain('ETag');
   });
+
+  it('rejects non-public asset paths with HTTP 403 Forbidden', async () => {
+    const request = new Request('https://assets.sunshade.icu/private/secret-credentials.json', {
+      method: 'GET',
+      headers: {
+        Origin: 'https://avatar.sunshade.icu',
+      },
+    });
+
+    const response = await handleAssetRequest(request);
+    expect(response.status).toBe(403);
+  });
 });

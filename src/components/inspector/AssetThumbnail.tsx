@@ -11,7 +11,7 @@
  */
 
 import type React from 'react';
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { clsx } from 'clsx';
 import {
   User,
@@ -75,6 +75,13 @@ export const AssetThumbnail: React.FC<AssetThumbnailProps> = ({ item, className 
   const [hasError, setHasError] = useState<boolean>(false);
   const [retryNonce, setRetryNonce] = useState<number>(0);
 
+  // Reset error & loading state when item.assetUrl changes
+  useEffect(() => {
+    setHasError(false);
+    setIsLoading(Boolean(item.assetUrl));
+    setRetryNonce(0);
+  }, [item.assetUrl]);
+
   const handleRetry = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
@@ -114,8 +121,12 @@ export const AssetThumbnail: React.FC<AssetThumbnailProps> = ({ item, className 
     );
   }
 
-  // Construct src with retry nonce if retried
-  const src = retryNonce > 0 ? `${item.assetUrl}?retry=${retryNonce}` : item.assetUrl;
+  // Construct src safely preserving existing query parameters if present
+  let src = item.assetUrl;
+  if (retryNonce > 0) {
+    const separator = src.includes('?') ? '&' : '?';
+    src = `${src}${separator}retry=${retryNonce}`;
+  }
 
   return (
     <div className={clsx('relative h-full w-full overflow-hidden rounded-md bg-slate-900', className)}>

@@ -130,7 +130,11 @@ describe('TASK-AVATAR-CANVAS-ANONYMOUS-CORS: Anonymous CORS and Tainted Canvas G
         }),
       } as any;
 
-      const result = await exportAvatarBadges(mockStage);
+      // Without allowFallbackOnTainted, exportAvatarBadges rejects to protect saved profile data
+      await expect(exportAvatarBadges(mockStage)).rejects.toThrow('Failed to export avatar canvas');
+
+      // With allowFallbackOnTainted, recovers cleanly and produces downloadable badges
+      const result = await exportAvatarBadges(mockStage, { allowFallbackOnTainted: true });
       expect(result.dataUrl128).toBeDefined();
       expect(result.dataUrl512).toBeDefined();
       expect(result.blob128).toBeDefined();

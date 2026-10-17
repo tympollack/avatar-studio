@@ -67,6 +67,16 @@ export async function handleAssetRequest(request: Request, env?: Env): Promise<R
   const url = new URL(request.url);
   const key = url.pathname.replace(/^\/+/, '');
 
+  // Restrict access strictly to public asset paths
+  const PUBLIC_PREFIXES = ['kenney/', 'avatar/', 'assets/'];
+  const isPublicKey = PUBLIC_PREFIXES.some((prefix) => key.startsWith(prefix));
+  if (!isPublicKey) {
+    return new Response('Forbidden: Non-public asset path', {
+      status: 403,
+      headers: corsHeaders,
+    });
+  }
+
   if (!env?.BUCKET) {
     return new Response(null, {
       status: 200,
