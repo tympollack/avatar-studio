@@ -21,13 +21,13 @@
 
 import type React from 'react';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Stage, Layer, Image as KonvaImage, Rect, Text, Group } from 'react-konva';
+import { Stage, Layer, Image as KonvaImage, Rect, Circle, Group } from 'react-konva';
 import type Konva from 'konva';
 import { RGB as RGBFilter } from 'konva/lib/filters/RGB';
 import { useCanvasStore } from '../../store/canvasStore';
 import { CritterAnchorLayer } from './CritterAnchorLayer';
 import { clampNormalized } from '../../utils/coordinateMath';
-import { getCachedImage, loadImage } from '../../utils/imageCache';
+import { getCachedImage, loadImage } from '../../utils/imageLoader';
 
 // ──────────────────────────────────────────────
 // Virtual canvas constants
@@ -88,44 +88,87 @@ function useImage(url: string | undefined): HTMLImageElement | null {
 }
 
 // ──────────────────────────────────────────────
-// Placeholder rect for missing assets
+// Clean vector fallbacks (no overlapping text ghosting)
 // ──────────────────────────────────────────────
 
-interface PlaceholderLayerProps {
-  label: string;
-  fill: string;
-  opacity?: number;
+export interface NeutralAvatarSilhouetteProps {
+  size: number;
+  tintColor?: string;
+}
+
+export const NeutralAvatarSilhouette: React.FC<NeutralAvatarSilhouetteProps> = ({
+  size,
+  tintColor,
+}) => {
+  const fillColor = tintColor || '#334155';
+  const headRadius = size * 0.14;
+  const centerX = size * 0.5;
+  const headCenterY = size * 0.38;
+  const torsoWidth = size * 0.38;
+  const torsoHeight = size * 0.32;
+  const torsoX = centerX - torsoWidth / 2;
+  const torsoY = headCenterY + headRadius * 0.9;
+
+  return (
+    <Group name="fallback-silhouette" opacity={0.6}>
+      <Circle x={centerX} y={headCenterY} radius={headRadius} fill={fillColor} />
+      <Rect
+        x={torsoX}
+        y={torsoY}
+        width={torsoWidth}
+        height={torsoHeight}
+        fill={fillColor}
+        cornerRadius={[Math.round(size * 0.1), Math.round(size * 0.1), 0, 0]}
+      />
+    </Group>
+  );
+};
+
+export interface NeutralFrameOutlineProps {
   size: number;
 }
 
-const PlaceholderLayer: React.FC<PlaceholderLayerProps> = ({
-  label,
-  fill,
-  opacity = 0.15,
+export const NeutralFrameOutline: React.FC<NeutralFrameOutlineProps> = ({ size }) => {
+  const margin = Math.round(size * 0.03);
+  const dimension = size - margin * 2;
+  return (
+    <Group name="fallback-frame-outline" opacity={0.5}>
+      <Rect
+        x={margin}
+        y={margin}
+        width={dimension}
+        height={dimension}
+        stroke="rgba(255,255,255,0.15)"
+        strokeWidth={Math.max(1.5, Math.round(size * 0.003))}
+        cornerRadius={Math.round(size * 0.03)}
+      />
+    </Group>
+  );
+};
+
+export interface NeutralBackgroundFallbackProps {
+  size: number;
+  theme?: 'day' | 'night';
+}
+
+export const NeutralBackgroundFallback: React.FC<NeutralBackgroundFallbackProps> = ({
   size,
-}) => (
-  <>
-    <Rect width={size} height={size} fill={fill} opacity={opacity} />
-    <Text
-      text={label}
-      x={0}
-      y={size / 2 - 10}
-      width={size}
-      align="center"
-      fill="rgba(255,255,255,0.3)"
-      fontSize={Math.round(size * 0.022)}
-    />
-  </>
-);
+  theme = 'day',
+}) => {
+  const bgColor = theme === 'night' ? '#090d16' : '#0f172a';
+  return <Rect width={size} height={size} fill={bgColor} />;
+};
 
 // ──────────────────────────────────────────────
-// Full-size image layer (with optional RGBA tint)
+// Full-size image layer (with optional RGBA tint and clean fallbacks)
 // ──────────────────────────────────────────────
+
+export type FallbackType = 'silhouette' | 'frame' | 'background' | 'landscape' | 'none';
 
 interface AssetImageLayerProps {
   assetUrl: string | undefined;
-  placeholderLabel: string;
-  placeholderFill: string;
+  fallbackType?: FallbackType;
+  theme?: 'day' | 'night';
   size: number;
   /**
    * Hex tint color (e.g. "#DC2626"). When provided, applies a Konva RGBA
@@ -138,8 +181,8 @@ interface AssetImageLayerProps {
 
 const AssetImageLayer: React.FC<AssetImageLayerProps> = ({
   assetUrl,
-  placeholderLabel,
-  placeholderFill,
+  fallbackType = 'none',
+  theme = 'day',
   size,
   tintColor,
   opacity = 1,
@@ -148,8 +191,6 @@ const AssetImageLayer: React.FC<AssetImageLayerProps> = ({
   const nodeRef = useRef<Konva.Image>(null);
 
   // Apply/remove RGBA tint filter whenever tintColor, image, or canvas size changes.
-  // Re-creates node cache when tinted, or clears cache when untinted so resized images
-  // never render stale cached bitmap bounds. (Fixes Devin BUG_0004.)
   useEffect(() => {
     const node = nodeRef.current;
     if (!node || !img) return;
@@ -161,13 +202,10 @@ const AssetImageLayer: React.FC<AssetImageLayerProps> = ({
         node.green(rgb.g);
         node.blue(rgb.b);
         node.filters([RGBFilter]);
-        // cache() is required for Konva filters to work.
-        // Clear previous cache first so new dimensions are re-cached accurately.
         node.clearCache();
         node.cache();
       }
     } else {
-      // Untinted images do not require caching; clear any cached raster buffer
       node.filters([]);
       node.clearCache();
     }
@@ -179,13 +217,16 @@ const AssetImageLayer: React.FC<AssetImageLayerProps> = ({
   }, [tintColor, img, size]);
 
   if (!img) {
-    return (
-      <PlaceholderLayer
-        label={placeholderLabel}
-        fill={placeholderFill}
-        size={size}
-      />
-    );
+    if (fallbackType === 'silhouette') {
+      return <NeutralAvatarSilhouette size={size} tintColor={tintColor} />;
+    }
+    if (fallbackType === 'frame') {
+      return <NeutralFrameOutline size={size} />;
+    }
+    if (fallbackType === 'background') {
+      return <NeutralBackgroundFallback size={size} theme={theme} />;
+    }
+    return null;
   }
 
   return (
@@ -306,6 +347,32 @@ export const AvatarCanvasStage: React.FC<AvatarCanvasStageProps> = ({
     y: (clampedAnchor.y - 0.75) * canvasSize,
   };
 
+  // Requirement 1: Clear canvas stage and layers bounding context before repainting
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    for (const layer of stage.getLayers()) {
+      const nativeCanvas = layer.getCanvas();
+      const ctx = nativeCanvas?.getContext();
+      if (ctx && '_context' in ctx) {
+        (ctx as any)._context?.clearRect(0, 0, canvasSize, canvasSize);
+      }
+      layer.clear();
+      layer.batchDraw();
+    }
+    stage.batchDraw();
+  }, [
+    canvasSize,
+    backgroundId,
+    state.backgroundTheme,
+    landscapeConfig.landscapeId,
+    avatarConfig,
+    state.critters,
+    frameId,
+    stageRef,
+  ]);
+
   return (
     <div
       ref={containerRef}
@@ -324,33 +391,31 @@ export const AvatarCanvasStage: React.FC<AvatarCanvasStageProps> = ({
         onWheel={handleWheel}
       >
         {/* ── Layer 1: Background ── */}
-        <Layer name="background">
+        <Layer name="background" clearBeforeDraw={true}>
           <AssetImageLayer
             assetUrl={bgItem?.assetUrl}
-            placeholderLabel={`Background\n${state.backgroundTheme}`}
-            placeholderFill="#0f172a"
+            fallbackType="background"
+            theme={state.backgroundTheme}
             size={canvasSize}
           />
         </Layer>
 
         {/* ── Layer 2: Landscape / Isometric Terrain ── */}
-        <Layer name="landscape">
+        <Layer name="landscape" clearBeforeDraw={true}>
           <AssetImageLayer
             assetUrl={landscapeItem?.assetUrl}
-            placeholderLabel="Landscape"
-            placeholderFill="#1e293b"
+            fallbackType="landscape"
             size={canvasSize}
           />
         </Layer>
 
         {/* ── Layer 3: Ordered Modular Avatar (Kenney Character Specification) ── */}
-        <Layer name="avatar">
+        <Layer name="avatar" clearBeforeDraw={true}>
           <Group x={anchorOffsetPx.x} y={anchorOffsetPx.y}>
-            {/* 1. Base Body silhouette — tinted via Konva RGBA filter */}
+            {/* 1. Base Body silhouette — clean vector fallback, tinted via Konva RGBA filter */}
             <AssetImageLayer
               assetUrl={silhouetteItem?.assetUrl}
-              placeholderLabel="Avatar Base"
-              placeholderFill="#334155"
+              fallbackType="silhouette"
               size={canvasSize}
               tintColor={avatarConfig.tintColor}
             />
@@ -359,8 +424,7 @@ export const AvatarCanvasStage: React.FC<AvatarCanvasStageProps> = ({
             {eyesItem && (
               <AssetImageLayer
                 assetUrl={eyesItem.assetUrl}
-                placeholderLabel="Eyes"
-                placeholderFill="#38bdf8"
+                fallbackType="none"
                 size={canvasSize}
               />
             )}
@@ -369,8 +433,7 @@ export const AvatarCanvasStage: React.FC<AvatarCanvasStageProps> = ({
             {mouthItem && (
               <AssetImageLayer
                 assetUrl={mouthItem.assetUrl}
-                placeholderLabel="Mouth"
-                placeholderFill="#f43f5e"
+                fallbackType="none"
                 size={canvasSize}
               />
             )}
@@ -379,8 +442,7 @@ export const AvatarCanvasStage: React.FC<AvatarCanvasStageProps> = ({
             {hairItem && (
               <AssetImageLayer
                 assetUrl={hairItem.assetUrl}
-                placeholderLabel="Hair"
-                placeholderFill="#d97706"
+                fallbackType="none"
                 size={canvasSize}
               />
             )}
@@ -389,8 +451,7 @@ export const AvatarCanvasStage: React.FC<AvatarCanvasStageProps> = ({
             {clothingItem && (
               <AssetImageLayer
                 assetUrl={clothingItem.assetUrl}
-                placeholderLabel="Garments"
-                placeholderFill="#475569"
+                fallbackType="none"
                 size={canvasSize}
               />
             )}
@@ -399,16 +460,14 @@ export const AvatarCanvasStage: React.FC<AvatarCanvasStageProps> = ({
             {hatItem && (
               <AssetImageLayer
                 assetUrl={hatItem.assetUrl}
-                placeholderLabel="Hat"
-                placeholderFill="#e11d48"
+                fallbackType="none"
                 size={canvasSize}
               />
             )}
             {accessoryItem && (
               <AssetImageLayer
                 assetUrl={accessoryItem.assetUrl}
-                placeholderLabel="Accessory"
-                placeholderFill="#6366f1"
+                fallbackType="none"
                 size={canvasSize}
               />
             )}
@@ -417,8 +476,7 @@ export const AvatarCanvasStage: React.FC<AvatarCanvasStageProps> = ({
             {handRigItem && (
               <AssetImageLayer
                 assetUrl={handRigItem.assetUrl}
-                placeholderLabel="Hand Rig"
-                placeholderFill="#64748b"
+                fallbackType="none"
                 size={canvasSize}
               />
             )}
@@ -435,11 +493,10 @@ export const AvatarCanvasStage: React.FC<AvatarCanvasStageProps> = ({
         />
 
         {/* ── Layer 5: Glassmorphic Frame HUD overlay ── */}
-        <Layer name="frame-hud">
+        <Layer name="frame-hud" clearBeforeDraw={true}>
           <AssetImageLayer
             assetUrl={frameItem?.assetUrl}
-            placeholderLabel="Frame HUD"
-            placeholderFill="#312e81"
+            fallbackType="frame"
             size={canvasSize}
             opacity={0.9}
           />
