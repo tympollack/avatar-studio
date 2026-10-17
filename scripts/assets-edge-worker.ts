@@ -3,10 +3,17 @@
  *
  * Cloudflare Worker / Edge Router for assets.sunshade.icu.
  *
+ * Deployment Note:
+ * This worker runs independently at the Cloudflare edge to serve public assets from the `sunshade-assets`
+ * R2 bucket. It is provisioned and deployed via Cloudflare Workers CLI (`wrangler deploy`)
+ * with the `BUCKET` R2 binding configured in the Cloudflare Dashboard / wrangler.toml.
+ * The core `avatar-studio` application is deployed separately to Cloudflare Pages.
+ *
  * Fronts the Cloudflare R2 bucket `sunshade-assets`, ensuring:
  * 1. Preflight OPTIONS requests respond immediately with HTTP 204 and standard CORS headers.
  * 2. GET/HEAD asset requests from allowed origins (avatar.sunshade.icu, hub.sunshade.icu,
  *    cozy.sunshade.icu, localhost) receive permissive CORS response headers.
+ * 3. Strict public taxonomy and safe asset extensions prevent unauthorized access to unpublished objects.
  */
 
 export interface Env {
@@ -23,9 +30,19 @@ export const ALLOWED_ORIGIN_PATTERNS = [
   /^http:\/\/localhost(:\d+)?$/,
 ];
 
+export const PUBLIC_ASSET_REGEX =
+  /^(?:assets\/)?(?:kenney|avatar|critters|landscapes|frames|backgrounds)\/[a-zA-Z0-9_\-\/ ]+\.(?:png|svg|webp|jpe?g|gif|json|woff2?|mp3|ogg|wav)$/i;
+
 export function isOriginAllowed(origin: string | null | undefined): boolean {
   if (!origin) return false;
   return ALLOWED_ORIGIN_PATTERNS.some((pattern) => pattern.test(origin));
+}
+
+export function isPublicAssetKey(key: string): boolean {
+  if (!key || key.includes('..') || key.includes('\0') || /(?:^|\/)\./.test(key)) {
+    return false;
+  }
+  return PUBLIC_ASSET_REGEX.test(key);
 }
 
 export function getCorsHeaders(requestOrigin: string | null | undefined): Record<string, string> {
@@ -65,12 +82,19 @@ export async function handleAssetRequest(request: Request, env?: Env): Promise<R
   }
 
   const url = new URL(request.url);
-  const key = url.pathname.replace(/^\/+/, '');
+  let rawPath = url.pathname.replace(/^\/+/, '');
+  let key: string;
+  try {
+    key = decodeURIComponent(rawPath);
+  } catch {
+    return new Response('Bad Request: Malformed URI encoding', {
+      status: 400,
+      headers: corsHeaders,
+    });
+  }
 
-  // Restrict access strictly to public asset paths
-  const PUBLIC_PREFIXES = ['kenney/', 'avatar/', 'assets/'];
-  const isPublicKey = PUBLIC_PREFIXES.some((prefix) => key.startsWith(prefix));
-  if (!isPublicKey) {
+  // Restrict access strictly to validated public asset paths and extensions
+  if (!isPublicAssetKey(key)) {
     return new Response('Forbidden: Non-public asset path', {
       status: 403,
       headers: corsHeaders,
@@ -78,13 +102,9 @@ export async function handleAssetRequest(request: Request, env?: Env): Promise<R
   }
 
   if (!env?.BUCKET) {
-    return new Response(null, {
-      status: 200,
-      headers: {
-        ...corsHeaders,
-        'Content-Type': 'image/png',
-        'Cache-Control': 'public, max-age=86400',
-      },
+    return new Response('R2 bucket binding unavailable', {
+      status: 503,
+      headers: corsHeaders,
     });
   }
 

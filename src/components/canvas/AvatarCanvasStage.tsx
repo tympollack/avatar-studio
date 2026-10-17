@@ -347,32 +347,6 @@ export const AvatarCanvasStage: React.FC<AvatarCanvasStageProps> = ({
     y: (clampedAnchor.y - 0.75) * canvasSize,
   };
 
-  // Requirement 1: Clear canvas stage and layers bounding context before repainting
-  useEffect(() => {
-    const stage = stageRef.current;
-    if (!stage) return;
-
-    for (const layer of stage.getLayers()) {
-      const nativeCanvas = layer.getCanvas();
-      const ctx = nativeCanvas?.getContext();
-      if (ctx && '_context' in ctx) {
-        (ctx as any)._context?.clearRect(0, 0, canvasSize, canvasSize);
-      }
-      layer.clear();
-      layer.batchDraw();
-    }
-    stage.batchDraw();
-  }, [
-    canvasSize,
-    backgroundId,
-    state.backgroundTheme,
-    landscapeConfig.landscapeId,
-    avatarConfig,
-    state.critters,
-    frameId,
-    stageRef,
-  ]);
-
   return (
     <div
       ref={containerRef}

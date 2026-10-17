@@ -67,7 +67,41 @@ describe('TASK-AVATAR-R2-CORS-POLICY: Cloudflare R2 CORS and Edge Router', () =>
     expect(response.headers.get('Access-Control-Max-Age')).toBe('86400');
   });
 
-  it('attaches CORS headers to GET asset requests', async () => {
+  it('attaches CORS headers to GET asset requests when bucket is bound', async () => {
+    const mockEnv = {
+      BUCKET: {
+        get: async (_key: string) => ({
+          body: new ReadableStream(),
+          httpEtag: '"mock-etag"',
+          writeHttpMetadata: (headers: Headers) => {
+            headers.set('Content-Type', 'image/png');
+            headers.set('Cache-Control', 'public, max-age=86400');
+          },
+        }),
+        head: async (_key: string) => ({
+          httpEtag: '"mock-etag"',
+          writeHttpMetadata: (headers: Headers) => {
+            headers.set('Content-Type', 'image/png');
+            headers.set('Cache-Control', 'public, max-age=86400');
+          },
+        }),
+      },
+    };
+
+    const request = new Request('https://assets.sunshade.icu/kenney/modular-characters/eyes/focused_green.png', {
+      method: 'GET',
+      headers: {
+        Origin: 'https://avatar.sunshade.icu',
+      },
+    });
+
+    const response = await handleAssetRequest(request, mockEnv);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://avatar.sunshade.icu');
+    expect(response.headers.get('Access-Control-Expose-Headers')).toContain('ETag');
+  });
+
+  it('returns HTTP 503 Service Unavailable when R2 BUCKET is unbound', async () => {
     const request = new Request('https://assets.sunshade.icu/kenney/modular-characters/eyes/focused_green.png', {
       method: 'GET',
       headers: {
@@ -76,9 +110,60 @@ describe('TASK-AVATAR-R2-CORS-POLICY: Cloudflare R2 CORS and Edge Router', () =>
     });
 
     const response = await handleAssetRequest(request);
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(503);
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://avatar.sunshade.icu');
-    expect(response.headers.get('Access-Control-Expose-Headers')).toContain('ETag');
+  });
+
+  it('decodes URL-encoded asset paths correctly', async () => {
+    let queriedKey = '';
+    const mockEnv = {
+      BUCKET: {
+        get: async (key: string) => {
+          queriedKey = key;
+          return {
+            body: new ReadableStream(),
+            httpEtag: '"mock-etag"',
+            writeHttpMetadata: () => {},
+          };
+        },
+        head: async () => null,
+      },
+    };
+
+    const request = new Request('https://assets.sunshade.icu/assets/avatar/blue%20hat.png', {
+      method: 'GET',
+      headers: {
+        Origin: 'https://avatar.sunshade.icu',
+      },
+    });
+
+    const response = await handleAssetRequest(request, mockEnv);
+    expect(response.status).toBe(200);
+    expect(queriedKey).toBe('assets/avatar/blue hat.png');
+  });
+
+  it('returns HTTP 400 Bad Request on malformed URI encoding', async () => {
+    const request = new Request('https://assets.sunshade.icu/kenney/%E0%A4%A', {
+      method: 'GET',
+      headers: {
+        Origin: 'https://avatar.sunshade.icu',
+      },
+    });
+
+    const response = await handleAssetRequest(request);
+    expect(response.status).toBe(400);
+  });
+
+  it('rejects path traversal attempts with HTTP 403 Forbidden', async () => {
+    const request = new Request('https://assets.sunshade.icu/kenney/../private/secrets.json', {
+      method: 'GET',
+      headers: {
+        Origin: 'https://avatar.sunshade.icu',
+      },
+    });
+
+    const response = await handleAssetRequest(request);
+    expect(response.status).toBe(403);
   });
 
   it('rejects non-public asset paths with HTTP 403 Forbidden', async () => {
