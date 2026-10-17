@@ -1,0 +1,7 @@
+/*
+  Access-Control-Allow-Origin: *
+  Access-Control-Allow-Methods: GET, HEAD, OPTIONS
+  Access-Control-Allow-Headers: *
+  Access-Control-Expose-Headers: ETag, Content-Type, Cache-Control
+  Access-Control-Max-Age: 86400
+  X-Content-Type-Options: nosniff
