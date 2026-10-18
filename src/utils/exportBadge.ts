@@ -171,9 +171,17 @@ export function safeCanvasToBlob(
 
 /**
  * Resamples an HTMLCanvasElement into a high-quality square destination canvas.
+ * When `allowFallback` is false, propagates errors instead of substituting placeholder canvases.
  */
-function resampleCanvas(source: HTMLCanvasElement, targetSize: number): HTMLCanvasElement {
+function resampleCanvas(
+  source: HTMLCanvasElement,
+  targetSize: number,
+  allowFallback = false
+): HTMLCanvasElement {
   if (typeof document === 'undefined') {
+    if (!allowFallback) {
+      throw new Error('Canvas environment unavailable for badge resampling');
+    }
     return createSanitizedFallbackCanvas(targetSize, targetSize);
   }
   const canvas = document.createElement('canvas');
@@ -187,9 +195,16 @@ function resampleCanvas(source: HTMLCanvasElement, targetSize: number): HTMLCanv
       ctx.drawImage(source, 0, 0, targetSize, targetSize);
     } catch (err: unknown) {
       const error = err as Error;
+      if (!allowFallback) {
+        throw new Error(`Failed to resample canvas: ${error.message}`);
+      }
       console.warn('[exportBadge] Failed to resample canvas (likely tainted):', error.message);
       return createSanitizedFallbackCanvas(targetSize, targetSize);
     }
+  } else if (!allowFallback) {
+    throw new Error('Failed to obtain 2D rendering context for badge resampling');
+  } else {
+    return createSanitizedFallbackCanvas(targetSize, targetSize);
   }
   return canvas;
 }
@@ -332,8 +347,8 @@ export async function exportAvatarBadges(
 
   const allowFallback = Boolean(options.allowFallbackOnTainted);
 
-  const canvas128 = resampleCanvas(nativeCanvas, 128);
-  const canvas512 = resampleCanvas(nativeCanvas, 512);
+  const canvas128 = resampleCanvas(nativeCanvas, 128, allowFallback);
+  const canvas512 = resampleCanvas(nativeCanvas, 512, allowFallback);
 
   const dataUrl128 = safeCanvasToDataURL(canvas128, mimeType, quality, allowFallback);
   const dataUrl512 = safeCanvasToDataURL(canvas512, mimeType, quality, allowFallback);

@@ -177,4 +177,75 @@ describe('TASK-AVATAR-R2-CORS-POLICY: Cloudflare R2 CORS and Edge Router', () =>
     const response = await handleAssetRequest(request);
     expect(response.status).toBe(403);
   });
+
+  it('permits dotted filenames and version directories under public paths', async () => {
+    const mockEnv = {
+      BUCKET: {
+        get: async (_key: string) => ({
+          body: new ReadableStream(),
+          httpEtag: '"mock-etag"',
+          writeHttpMetadata: () => {},
+        }),
+        head: async () => null,
+      },
+    };
+
+    const request = new Request(
+      'https://assets.sunshade.icu/kenney/modular-characters/v1.2/body.min.png',
+      {
+        method: 'GET',
+        headers: {
+          Origin: 'https://avatar.sunshade.icu',
+        },
+      }
+    );
+
+    const response = await handleAssetRequest(request, mockEnv);
+    expect(response.status).toBe(200);
+  });
+
+  it('rejects unpublished and draft paths with HTTP 403 Forbidden', async () => {
+    const draftRequest = new Request(
+      'https://assets.sunshade.icu/kenney/modular-characters/draft/body.png',
+      {
+        method: 'GET',
+        headers: { Origin: 'https://avatar.sunshade.icu' },
+      }
+    );
+    expect((await handleAssetRequest(draftRequest)).status).toBe(403);
+
+    const unpublishedRequest = new Request(
+      'https://assets.sunshade.icu/avatar/unpublished/special_hat.png',
+      {
+        method: 'GET',
+        headers: { Origin: 'https://avatar.sunshade.icu' },
+      }
+    );
+    expect((await handleAssetRequest(unpublishedRequest)).status).toBe(403);
+  });
+
+  it('rejects assets whose customMetadata marks them as unpublished or draft', async () => {
+    const mockEnvWithDraft = {
+      BUCKET: {
+        get: async () => ({
+          body: new ReadableStream(),
+          httpEtag: '"mock-etag"',
+          customMetadata: { status: 'draft', published: 'false' },
+          writeHttpMetadata: () => {},
+        }),
+        head: async () => null,
+      },
+    };
+
+    const request = new Request(
+      'https://assets.sunshade.icu/avatar/secret-teaser.png',
+      {
+        method: 'GET',
+        headers: { Origin: 'https://avatar.sunshade.icu' },
+      }
+    );
+
+    const response = await handleAssetRequest(request, mockEnvWithDraft);
+    expect(response.status).toBe(403);
+  });
 });

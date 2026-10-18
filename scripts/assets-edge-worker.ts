@@ -30,8 +30,11 @@ export const ALLOWED_ORIGIN_PATTERNS = [
   /^http:\/\/localhost(:\d+)?$/,
 ];
 
+export const UNPUBLISHED_PATH_REGEX =
+  /(?:^|\/)(?:\.|\.\.|draft|unpublished|private|internal|admin|secrets?|credentials?)(?:\/|$)/i;
+
 export const PUBLIC_ASSET_REGEX =
-  /^(?:assets\/)?(?:kenney|avatar|critters|landscapes|frames|backgrounds)\/[a-zA-Z0-9_\-\/ ]+\.(?:png|svg|webp|jpe?g|gif|json|woff2?|mp3|ogg|wav)$/i;
+  /^(?:assets\/)?(?:kenney|avatar|critters|landscapes|frames|backgrounds)\/(?:[a-zA-Z0-9_\-][a-zA-Z0-9_.\- ]*\/)*[a-zA-Z0-9_\-][a-zA-Z0-9_.\- ]*\.(?:png|svg|webp|jpe?g|gif|json|woff2?|mp3|ogg|wav)$/i;
 
 export function isOriginAllowed(origin: string | null | undefined): boolean {
   if (!origin) return false;
@@ -40,6 +43,9 @@ export function isOriginAllowed(origin: string | null | undefined): boolean {
 
 export function isPublicAssetKey(key: string): boolean {
   if (!key || key.includes('..') || key.includes('\0') || /(?:^|\/)\./.test(key)) {
+    return false;
+  }
+  if (UNPUBLISHED_PATH_REGEX.test(key)) {
     return false;
   }
   return PUBLIC_ASSET_REGEX.test(key);
@@ -112,6 +118,20 @@ export async function handleAssetRequest(request: Request, env?: Env): Promise<R
   if (!object) {
     return new Response('Asset Not Found', {
       status: 404,
+      headers: corsHeaders,
+    });
+  }
+
+  // Check publication status on object customMetadata (prevents retrieval of unpublished / draft assets)
+  const metadata = object.customMetadata;
+  if (
+    metadata?.published === 'false' ||
+    metadata?.visibility === 'private' ||
+    metadata?.status === 'draft' ||
+    metadata?.status === 'unpublished'
+  ) {
+    return new Response('Forbidden: Unpublished asset', {
+      status: 403,
       headers: corsHeaders,
     });
   }
