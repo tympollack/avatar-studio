@@ -23,4 +23,9 @@ export default {
   extensionsToTreatAsEsm: ['.ts', '.tsx'],
   // Node test environment (no jsdom needed for coordinateMath)
   testEnvironment: 'node',
+  moduleNameMapper: {
+    '^react-konva$': '<rootDir>/tests/__mocks__/react-konva.ts',
+    '^konva/lib/filters/RGB$': '<rootDir>/tests/__mocks__/konva/lib/filters/RGB.ts',
+    '^@/(.*)$': '<rootDir>/src/$1',
+  },
 };

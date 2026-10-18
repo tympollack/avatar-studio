@@ -1,0 +1,29 @@
+# Public asset CORS rules for Avatar Studio static assets
+/assets/*
+  Access-Control-Allow-Origin: *
+  Access-Control-Allow-Methods: GET, HEAD, OPTIONS
+  Access-Control-Allow-Headers: *
+  Access-Control-Expose-Headers: ETag, Content-Type, Cache-Control
+  Access-Control-Max-Age: 86400
+  X-Content-Type-Options: nosniff
+
+/*.png
+  Access-Control-Allow-Origin: *
+  Access-Control-Allow-Methods: GET, HEAD, OPTIONS
+  Access-Control-Allow-Headers: *
+  Access-Control-Expose-Headers: ETag, Content-Type, Cache-Control
+  Access-Control-Max-Age: 86400
+
+/*.webp
+  Access-Control-Allow-Origin: *
+  Access-Control-Allow-Methods: GET, HEAD, OPTIONS
+  Access-Control-Allow-Headers: *
+  Access-Control-Expose-Headers: ETag, Content-Type, Cache-Control
+  Access-Control-Max-Age: 86400
+
+/*.svg
+  Access-Control-Allow-Origin: *
+  Access-Control-Allow-Methods: GET, HEAD, OPTIONS
+  Access-Control-Allow-Headers: *
+  Access-Control-Expose-Headers: ETag, Content-Type, Cache-Control
+  Access-Control-Max-Age: 86400

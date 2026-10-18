@@ -18,6 +18,7 @@ import type React from 'react';
 import { useState, useEffect, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import type Konva from 'konva';
+import { ToastWarning } from './ui/ToastWarning';
 import { useAuth } from '../auth/AuthProvider';
 import { supabase } from '@/lib/supabase';
 import { CanvasProvider } from '../store/CanvasProvider';
@@ -34,22 +35,31 @@ import {
   waitForStageReadiness,
 } from '../utils/exportBadge';
 
+export { ToastWarning };
+
 // ──────────────────────────────────────────────
 // Catalog loader (inner — needs CanvasProvider in tree)
 // ──────────────────────────────────────────────
+
+interface CatalogLoaderProps {
+  userId?: string;
+  onWarning?: (msg: string) => void;
+}
 
 /**
  * CatalogLoader lives inside CanvasProvider so it can dispatch SET_CATALOG.
  * It queries both universal catalog.assets for Kenney modular assets and
  * hub.cosmetic_items for existing items, providing full cross-game catalog integration.
  */
-const CatalogLoader: React.FC<{ userId?: string }> = ({ userId }) => {
+const CatalogLoader: React.FC<CatalogLoaderProps> = ({ userId, onWarning }) => {
   const { dispatch } = useCanvasStore();
 
   useEffect(() => {
     let cancelled = false;
 
     async function fetchCatalog() {
+      let failedToFetchCdn = false;
+
       // 1. Fetch from catalog.assets for Kenney modular assets
       const { data: catalogData, error: catalogError } = await supabase
         .schema('catalog')
@@ -59,6 +69,7 @@ const CatalogLoader: React.FC<{ userId?: string }> = ({ userId }) => {
 
       if (catalogError) {
         console.warn('[CatalogLoader] Failed to fetch catalog.assets:', catalogError.message);
+        failedToFetchCdn = true;
       }
 
       // 2. Fetch from hub.cosmetic_items for legacy/hub assets
@@ -69,9 +80,20 @@ const CatalogLoader: React.FC<{ userId?: string }> = ({ userId }) => {
 
       if (hubError) {
         console.warn('[CatalogLoader] Failed to fetch hub.cosmetic_items:', hubError.message);
+        failedToFetchCdn = true;
       }
 
       if (cancelled) return;
+
+      if (failedToFetchCdn) {
+        if (!catalogData && !hubData) {
+          onWarning?.('Asset manifest could not be fetched from CDN. Displaying offline fallbacks.');
+        } else if (hubError && !catalogError) {
+          onWarning?.('Some cosmetic items from Hub could not be loaded.');
+        } else if (catalogError && !hubError) {
+          onWarning?.('Some modular assets from catalog CDN could not be loaded.');
+        }
+      }
       if (!catalogData && !hubData) return;
 
       type CatalogAssetRow = {
@@ -149,6 +171,7 @@ interface StudioEditorProps {
 const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
   const { state, dispatch } = useCanvasStore();
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const [cdnWarning, setCdnWarning] = useState<string | null>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
 
   // Load authenticated user's persisted loadout on sign-in, reset on sign-out (Devin BUG_0002)
@@ -318,7 +341,7 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
       await preloadImages(activeUrls);
       await waitForStageReadiness(stageRef.current, activeUrls);
 
-      const badges = await exportAvatarBadges(stageRef.current);
+      const badges = await exportAvatarBadges(stageRef.current, { allowFallbackOnTainted: true });
       if (size === 128) {
         downloadBadgeBlob(badges.blob128, 'avatar-badge-128x128.webp');
       } else {
@@ -331,7 +354,10 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
 
   return (
     <>
-      <CatalogLoader userId={session?.user?.id} />
+      <CatalogLoader userId={session?.user?.id} onWarning={setCdnWarning} />
+      {cdnWarning && (
+        <ToastWarning message={cdnWarning} onDismiss={() => setCdnWarning(null)} />
+      )}
 
       <div className="flex h-full flex-col bg-slate-900">
         {/* Top nav */}
