@@ -88,13 +88,18 @@ describe('TASK-AVATAR-CANVAS-ANONYMOUS-CORS: Anonymous CORS and Tainted Canvas G
         }),
       } as unknown as HTMLCanvasElement;
 
-      // In JSDOM / node environment, fallback will create real canvas and return dataUrl
-      const result = safeCanvasToDataURL(mockTaintedCanvas, 'image/png');
+      // Without allowFallback, throws to protect save integrity
+      expect(() => safeCanvasToDataURL(mockTaintedCanvas, 'image/png')).toThrow(
+        'Tainted canvases may not be exported'
+      );
+
+      // With allowFallback=true, returns sanitized fallback dataUrl for downloads
+      const result = safeCanvasToDataURL(mockTaintedCanvas, 'image/png', 0.95, true);
       expect(typeof result).toBe('string');
       expect(result.startsWith('data:')).toBe(true);
     });
 
-    it('safeCanvasToBlob catches SecurityError and returns a valid Blob', async () => {
+    it('safeCanvasToBlob rejects on SecurityError unless allowFallback is true', async () => {
       const mockTaintedCanvas = {
         width: 128,
         height: 128,
@@ -107,7 +112,13 @@ describe('TASK-AVATAR-CANVAS-ANONYMOUS-CORS: Anonymous CORS and Tainted Canvas G
         }),
       } as unknown as HTMLCanvasElement;
 
-      const blob = await safeCanvasToBlob(mockTaintedCanvas, 'image/png');
+      // Without allowFallback, rejects to protect save integrity
+      await expect(safeCanvasToBlob(mockTaintedCanvas, 'image/png')).rejects.toThrow(
+        'Tainted canvases may not be exported'
+      );
+
+      // With allowFallback=true, returns sanitized fallback blob for downloads
+      const blob = await safeCanvasToBlob(mockTaintedCanvas, 'image/png', 0.95, true);
       expect(blob).toBeDefined();
       expect(blob.size).toBeGreaterThanOrEqual(0);
     });

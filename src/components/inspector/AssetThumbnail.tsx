@@ -142,7 +142,6 @@ export const AssetThumbnail: React.FC<AssetThumbnailProps> = ({ item, className 
       <img
         src={src}
         alt={item.name}
-        crossOrigin="anonymous"
         loading="lazy"
         decoding="async"
         onLoad={() => setIsLoading(false)}
