@@ -309,29 +309,28 @@ export async function fetchLayerAsset(
     }
   }
 
-  // Attempt resolving from R2 private and public asset prefixes
+  // Attempt resolving from R2 private and public asset prefixes in parallel
   if (bucket) {
-    const prefixes = [
-      candidateKey,
-      `private/assets/${candidateKey}`,
-      `assets/${candidateKey}`,
-      `kenney/${candidateKey}`,
-    ];
+    const hasExt = /\.(png|webp|svg|jpe?g)$/i.test(candidateKey);
+    const candidateKeys = hasExt
+      ? [
+          candidateKey,
+          `private/assets/${candidateKey}`,
+          `assets/${candidateKey}`,
+        ]
+      : [
+          `private/assets/${candidateKey}.png`,
+          `private/assets/${candidateKey}.webp`,
+          `assets/${candidateKey}.png`,
+          `assets/${candidateKey}.webp`,
+          candidateKey,
+        ];
 
-    // Also try common extensions if bare asset ID
-    if (!/\.(png|webp|svg|jpe?g)$/i.test(candidateKey)) {
-      prefixes.push(
-        `private/assets/${candidateKey}.png`,
-        `private/assets/${candidateKey}.webp`,
-        `assets/${candidateKey}.png`,
-        `assets/${candidateKey}.webp`
-      );
-    }
-
-    for (const key of prefixes) {
-      try {
-        const obj = await bucket.get(key);
-        if (obj) {
+    const results = await Promise.all(
+      candidateKeys.map(async (key) => {
+        try {
+          const obj = await bucket.get(key);
+          if (!obj) return null;
           let buffer: ArrayBuffer;
           if (typeof obj.arrayBuffer === 'function') {
             buffer = await obj.arrayBuffer();
@@ -341,7 +340,7 @@ export async function fetchLayerAsset(
             const response = new Response(obj.body as ReadableStream);
             buffer = await response.arrayBuffer();
           } else {
-            continue;
+            return null;
           }
 
           const isSvg = key.endsWith('.svg');
@@ -357,11 +356,14 @@ export async function fetchLayerAsset(
             dataUri: `data:${mime};base64,${base64}`,
             format: isSvg ? 'svg' : isWebp ? 'webp' : 'png',
           };
+        } catch {
+          return null;
         }
-      } catch {
-        // Continue search
-      }
-    }
+      })
+    );
+
+    const match = results.find(Boolean);
+    if (match) return match;
   }
 
   // If remote URL and fetch is available
@@ -704,8 +706,10 @@ export async function renderSvgToWebp(
   } as ImageData;
 
   const webpBuffer = await encodeWebp(imageDataLike, {
-    quality,
+    quality: Math.min(quality, 85),
     method: 0,
+    segments: 1,
+    filter_strength: 0,
   });
 
   return {
