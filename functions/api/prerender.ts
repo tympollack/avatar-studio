@@ -32,7 +32,7 @@ import type {
   CritterConfig,
   LandscapeConfig,
 } from '../../src/types/avatar';
-import { getCorsHeaders } from '../../scripts/assets-edge-worker';
+import { isOriginAllowed } from '../../scripts/assets-edge-worker';
 
 // ──────────────────────────────────────────────
 // Interfaces & Bindings
@@ -82,6 +82,7 @@ export interface Env {
   MEDIA_CDN_URL?: string;
   RESVG_WASM?: WebAssembly.Module | ArrayBuffer;
   WEBP_WASM?: WebAssembly.Module | ArrayBuffer;
+  ASSETS?: { fetch: (request: Request | string | URL) => Promise<Response> };
   SKIP_AUTH?: string;
 }
 
@@ -94,6 +95,7 @@ export interface PrerenderRequestBody {
   critters?: CritterConfig[];
   landscapeConfig?: LandscapeConfig;
   manifest?: CompositeManifest;
+  assetUrls?: Record<string, string>;
   version?: number;
   quality?: number;
 }
@@ -112,6 +114,7 @@ export interface PrerenderResponseData {
   userId: string;
   version: number;
   renderUrls: RenderUrls;
+  persisted?: boolean;
   targets: {
     chip: TargetRenderResult;
     profile: TargetRenderResult;
@@ -121,29 +124,83 @@ export interface PrerenderResponseData {
 }
 
 // ──────────────────────────────────────────────
+// CORS Headers Configuration
+// ──────────────────────────────────────────────
+
+export function getPrerenderCorsHeaders(
+  requestOrigin: string | null | undefined
+): Record<string, string> {
+  const allowOrigin =
+    requestOrigin && isOriginAllowed(requestOrigin) ? requestOrigin : 'https://avatar.sunshade.icu';
+
+  return {
+    'Access-Control-Allow-Origin': allowOrigin,
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, *',
+    'Access-Control-Expose-Headers': 'ETag, Content-Type, Cache-Control, X-Composite-Duration-Ms',
+    'Access-Control-Max-Age': '86400',
+  };
+}
+
+// ──────────────────────────────────────────────
 // WebAssembly Runtime State
 // ──────────────────────────────────────────────
 
 let resvgInitialized = false;
 let webpInitialized = false;
 
-export async function ensureWasmInitialized(env?: Env): Promise<void> {
+export async function ensureWasmInitialized(env?: Env, requestUrl?: string): Promise<void> {
   if (!resvgInitialized) {
     if (env?.RESVG_WASM) {
       await initWasm(env.RESVG_WASM);
       resvgInitialized = true;
-    } else {
+    } else if (env?.ASSETS?.fetch) {
+      try {
+        const wasmRes = await env.ASSETS.fetch(
+          new URL('/wasm/index_bg.wasm', requestUrl || 'http://localhost')
+        );
+        if (wasmRes.ok) {
+          const buffer = await wasmRes.arrayBuffer();
+          await initWasm(buffer);
+          resvgInitialized = true;
+        }
+      } catch {
+        // Fallback to fetch or fs
+      }
+    }
+
+    if (!resvgInitialized && typeof fetch === 'function') {
+      try {
+        const targetUrl = requestUrl
+          ? new URL('/wasm/index_bg.wasm', requestUrl).toString()
+          : 'https://avatar.sunshade.icu/wasm/index_bg.wasm';
+        const res = await fetch(targetUrl);
+        if (res.ok) {
+          const buffer = await res.arrayBuffer();
+          await initWasm(buffer);
+          resvgInitialized = true;
+        }
+      } catch {
+        // Fallback to node:fs
+      }
+    }
+
+    if (!resvgInitialized) {
       try {
         const fs = await import('node:fs');
         const path = await import('node:path');
-        const wasmPath = path.resolve(
-          process.cwd(),
-          'node_modules/@resvg/resvg-wasm/index_bg.wasm'
-        );
-        if (fs.existsSync(wasmPath)) {
-          const buffer = fs.readFileSync(wasmPath);
-          await initWasm(buffer);
-          resvgInitialized = true;
+        const candidates = [
+          path.resolve(process.cwd(), 'node_modules/@resvg/resvg-wasm/index_bg.wasm'),
+          path.resolve(process.cwd(), 'public/wasm/index_bg.wasm'),
+          path.resolve(process.cwd(), 'dist/wasm/index_bg.wasm'),
+        ];
+        for (const candidate of candidates) {
+          if (fs.existsSync(candidate)) {
+            const buffer = fs.readFileSync(candidate);
+            await initWasm(buffer);
+            resvgInitialized = true;
+            break;
+          }
         }
       } catch {
         // Fallback for edge runtime if bundled or previously loaded
@@ -159,19 +216,59 @@ export async function ensureWasmInitialized(env?: Env): Promise<void> {
           : await WebAssembly.compile(env.WEBP_WASM);
       await initWebp(module);
       webpInitialized = true;
-    } else {
+    } else if (env?.ASSETS?.fetch) {
       try {
-        const fs = await import('node:fs');
-        const path = await import('node:path');
-        const wasmPath = path.resolve(
-          process.cwd(),
-          'node_modules/@jsquash/webp/codec/enc/webp_enc_simd.wasm'
+        const wasmRes = await env.ASSETS.fetch(
+          new URL('/wasm/webp_enc_simd.wasm', requestUrl || 'http://localhost')
         );
-        if (fs.existsSync(wasmPath)) {
-          const buffer = fs.readFileSync(wasmPath);
+        if (wasmRes.ok) {
+          const buffer = await wasmRes.arrayBuffer();
           const module = await WebAssembly.compile(buffer);
           await initWebp(module);
           webpInitialized = true;
+        }
+      } catch {
+        // Fallback to fetch or fs
+      }
+    }
+
+    if (!webpInitialized && typeof fetch === 'function') {
+      try {
+        const targetUrl = requestUrl
+          ? new URL('/wasm/webp_enc_simd.wasm', requestUrl).toString()
+          : 'https://avatar.sunshade.icu/wasm/webp_enc_simd.wasm';
+        const res = await fetch(targetUrl);
+        if (res.ok) {
+          const buffer = await res.arrayBuffer();
+          const module = await WebAssembly.compile(buffer);
+          await initWebp(module);
+          webpInitialized = true;
+        }
+      } catch {
+        // Fallback to node:fs
+      }
+    }
+
+    if (!webpInitialized) {
+      try {
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        const candidates = [
+          path.resolve(
+            process.cwd(),
+            'node_modules/@jsquash/webp/codec/enc/webp_enc_simd.wasm'
+          ),
+          path.resolve(process.cwd(), 'public/wasm/webp_enc_simd.wasm'),
+          path.resolve(process.cwd(), 'dist/wasm/webp_enc_simd.wasm'),
+        ];
+        for (const candidate of candidates) {
+          if (fs.existsSync(candidate)) {
+            const buffer = fs.readFileSync(candidate);
+            const module = await WebAssembly.compile(buffer);
+            await initWebp(module);
+            webpInitialized = true;
+            break;
+          }
         }
       } catch {
         // Fallback for edge runtime
@@ -262,26 +359,28 @@ export async function verifyAuth(
     }
   }
 
-  // Fallback: Verify JWT payload user ID claims if Supabase endpoint is unavailable
-  try {
-    const parts = token.split('.');
-    if (parts.length === 3) {
-      const payloadJson = atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'));
-      const payload = JSON.parse(payloadJson);
-      const sub = payload.sub || payload.user_id;
-      if (sub && sub !== expectedUserId) {
-        return {
-          authorized: false,
-          error: `Forbidden: Token sub (${sub}) does not match request userId (${expectedUserId})`,
-        };
+  // Fallback: In automated test environment without live Supabase, validate JWT payload claims
+  if (process.env.NODE_ENV === 'test') {
+    try {
+      const parts = token.split('.');
+      if (parts.length === 3) {
+        const payloadJson = atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'));
+        const payload = JSON.parse(payloadJson);
+        const sub = payload.sub || payload.user_id;
+        if (sub && sub !== expectedUserId) {
+          return {
+            authorized: false,
+            error: `Forbidden: Token sub (${sub}) does not match request userId (${expectedUserId})`,
+          };
+        }
+        return { authorized: true };
       }
-      return { authorized: true };
+    } catch {
+      return { authorized: false, error: 'Unauthorized: Invalid token format' };
     }
-  } catch {
-    // If not a parseable JWT, allow if matching mock token
   }
 
-  return { authorized: true };
+  return { authorized: false, error: 'Unauthorized: Authentication service unconfigured' };
 }
 
 // ──────────────────────────────────────────────
@@ -289,17 +388,58 @@ export async function verifyAuth(
 // ──────────────────────────────────────────────
 
 /**
+ * Validates whether an outbound remote URL is safe from SSRF.
+ */
+function isAllowedRemoteUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    const host = parsed.hostname.toLowerCase();
+    const isSunshade = host === 'sunshade.icu' || host.endsWith('.sunshade.icu');
+    const isLocal = host === 'localhost' || host === '127.0.0.1';
+    if (!isSunshade && !isLocal) return false;
+    // Prohibit link-local or metadata addresses
+    if (
+      /^(?:169\.254\.|10\.|192\.168\.|172\.(?:1[6-9]|2[0-9]|3[01])\.)/.test(host) &&
+      !isLocal
+    ) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Normalizes an asset key or URI and resolves it from the R2 private asset prefix.
  */
 export async function fetchLayerAsset(
   assetIdOrUrl: string | undefined | null,
-  env?: Env
+  env?: Env,
+  assetUrls?: Record<string, string>
 ): Promise<{ dataUri: string; format: string } | null> {
   if (!assetIdOrUrl) return null;
+  // Guard against path traversal and unpublished/draft paths
+  if (assetIdOrUrl.includes('..') || assetIdOrUrl.includes('\0')) return null;
+  if (/(?:^|\/)(?:draft|internal|unpublished|wip|temp|staging-assets)\//i.test(assetIdOrUrl)) {
+    return null;
+  }
 
   const bucket = env?.AVATAR_BUCKET || env?.BUCKET;
 
   let candidateKey = assetIdOrUrl;
+  let mappedPath: string | null = null;
+
+  if (assetUrls?.[assetIdOrUrl]) {
+    try {
+      const parsed = new URL(assetUrls[assetIdOrUrl]);
+      mappedPath = parsed.pathname.replace(/^\/+/, '');
+    } catch {
+      mappedPath = assetUrls[assetIdOrUrl].replace(/^\/+/, '');
+    }
+  }
+
   if (candidateKey.startsWith('http://') || candidateKey.startsWith('https://')) {
     try {
       const parsed = new URL(candidateKey);
@@ -311,26 +451,47 @@ export async function fetchLayerAsset(
 
   // Attempt resolving from R2 private and public asset prefixes in parallel
   if (bucket) {
+    const candidateKeys: string[] = [];
+    if (mappedPath) {
+      candidateKeys.push(mappedPath, `assets/${mappedPath}`, `private/assets/${mappedPath}`);
+    }
+
     const hasExt = /\.(png|webp|svg|jpe?g)$/i.test(candidateKey);
-    const candidateKeys = hasExt
-      ? [
-          candidateKey,
-          `private/assets/${candidateKey}`,
-          `assets/${candidateKey}`,
-        ]
-      : [
-          `private/assets/${candidateKey}.png`,
-          `private/assets/${candidateKey}.webp`,
-          `assets/${candidateKey}.png`,
-          `assets/${candidateKey}.webp`,
-          candidateKey,
-        ];
+    if (hasExt) {
+      candidateKeys.push(
+        candidateKey,
+        `private/assets/${candidateKey}`,
+        `assets/${candidateKey}`
+      );
+    } else {
+      candidateKeys.push(
+        `private/assets/${candidateKey}.svg`,
+        `private/assets/${candidateKey}.png`,
+        `private/assets/${candidateKey}.webp`,
+        `assets/${candidateKey}.svg`,
+        `assets/${candidateKey}.png`,
+        `assets/${candidateKey}.webp`,
+        candidateKey
+      );
+    }
 
     const results = await Promise.all(
       candidateKeys.map(async (key) => {
         try {
           const obj = await bucket.get(key);
           if (!obj) return null;
+
+          // Check publication status on object customMetadata (SEC_0003)
+          const metadata = obj.customMetadata;
+          if (
+            metadata?.published === 'false' ||
+            metadata?.visibility === 'private' ||
+            metadata?.status === 'draft' ||
+            metadata?.status === 'unpublished'
+          ) {
+            return null;
+          }
+
           let buffer: ArrayBuffer;
           if (typeof obj.arrayBuffer === 'function') {
             buffer = await obj.arrayBuffer();
@@ -340,6 +501,11 @@ export async function fetchLayerAsset(
             const response = new Response(obj.body as ReadableStream);
             buffer = await response.arrayBuffer();
           } else {
+            return null;
+          }
+
+          // Protect memory from oversized layer inputs (>10MB)
+          if (buffer.byteLength > 10 * 1024 * 1024) {
             return null;
           }
 
@@ -366,13 +532,20 @@ export async function fetchLayerAsset(
     if (match) return match;
   }
 
-  // If remote URL and fetch is available
+  // If remote URL and fetch is available, perform SSRF check before requesting
   if (assetIdOrUrl.startsWith('http://') || assetIdOrUrl.startsWith('https://')) {
+    if (!isAllowedRemoteUrl(assetIdOrUrl)) {
+      return null;
+    }
+
     try {
       const res = await fetch(assetIdOrUrl);
       if (res.ok) {
         const mime = res.headers.get('content-type') || 'image/png';
         const buffer = await res.arrayBuffer();
+        if (buffer.byteLength > 10 * 1024 * 1024) {
+          return null;
+        }
         const uint8 = new Uint8Array(buffer);
         let binary = '';
         for (let i = 0; i < uint8.byteLength; i++) {
@@ -405,6 +578,43 @@ function escapeXml(unsafe: string): string {
     .replace(/'/g, '&apos;');
 }
 
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const clean = hex.replace('#', '');
+  if (clean.length === 3) {
+    return {
+      r: parseInt(clean[0] + clean[0], 16),
+      g: parseInt(clean[1] + clean[1], 16),
+      b: parseInt(clean[2] + clean[2], 16),
+    };
+  }
+  if (clean.length === 6) {
+    return {
+      r: parseInt(clean.substring(0, 2), 16),
+      g: parseInt(clean.substring(2, 4), 16),
+      b: parseInt(clean.substring(4, 6), 16),
+    };
+  }
+  return null;
+}
+
+function buildTintFilterDef(filterId: string, tintColor?: string): string {
+  if (!tintColor) return '';
+  const rgb = hexToRgb(tintColor);
+  if (!rgb) return '';
+  const r = (rgb.r / 255).toFixed(3);
+  const g = (rgb.g / 255).toFixed(3);
+  const b = (rgb.b / 255).toFixed(3);
+  return `
+    <filter id="${filterId}" color-interpolation-filters="sRGB">
+      <feColorMatrix type="matrix" values="
+        ${r} 0 0 0 0
+        0 ${g} 0 0 0
+        0 0 ${b} 0 0
+        0 0 0 1 0" />
+    </filter>
+  `.trim();
+}
+
 /**
  * Builds the 128×128 circular avatar badge SVG.
  */
@@ -433,6 +643,7 @@ export function buildChipSvg(
       <stop offset="0%" stop-color="#0f172a"/>
       <stop offset="100%" stop-color="#1e293b"/>
     </linearGradient>
+    ${avatarConfig.tintColor ? buildTintFilterDef('chip-tint', avatarConfig.tintColor) : ''}
   </defs>
 
   <g clip-path="url(#chip-circle)">
@@ -442,7 +653,9 @@ export function buildChipSvg(
     <!-- Avatar Layer Stack -->
     ${
       silhouetteData
-        ? `<image href="${silhouetteData}" x="16" y="16" width="96" height="96" />`
+        ? `<image href="${silhouetteData}" x="16" y="16" width="96" height="96" ${
+            avatarConfig.tintColor ? 'filter="url(#chip-tint)"' : ''
+          }/>`
         : `<!-- Neutral Silhouette Fallback -->
            <circle cx="64" cy="50" r="22" fill="${escapeXml(tint)}"/>
            <ellipse cx="64" cy="94" rx="34" ry="24" fill="${escapeXml(tint)}"/>`
@@ -523,6 +736,7 @@ export function buildProfileSvg(
       <stop offset="0%" stop-color="#0b0f19"/>
       <stop offset="100%" stop-color="#1a2234"/>
     </linearGradient>
+    ${avatarConfig.tintColor ? buildTintFilterDef('profile-tint', avatarConfig.tintColor) : ''}
   </defs>
 
   <!-- Background Layer -->
@@ -536,7 +750,9 @@ export function buildProfileSvg(
   <g id="avatar-rig">
     ${
       silhouetteData
-        ? `<image href="${silhouetteData}" x="56" y="56" width="400" height="400" />`
+        ? `<image href="${silhouetteData}" x="56" y="56" width="400" height="400" ${
+            avatarConfig.tintColor ? 'filter="url(#profile-tint)"' : ''
+          }/>`
         : `<!-- Vector Silhouette Fallback -->
            <circle cx="256" cy="200" r="88" fill="${escapeXml(tint)}"/>
            <ellipse cx="256" cy="380" rx="140" ry="100" fill="${escapeXml(tint)}"/>`
@@ -605,6 +821,7 @@ export function buildLandscapeSvg(
       <stop offset="60%" stop-color="#0f172a"/>
       <stop offset="100%" stop-color="#1e1b4b"/>
     </linearGradient>
+    ${avatarConfig.tintColor ? buildTintFilterDef('landscape-tint', avatarConfig.tintColor) : ''}
   </defs>
 
   <!-- Habitat Landscape Scene -->
@@ -626,7 +843,9 @@ export function buildLandscapeSvg(
   <g transform="translate(${posX}, ${posY})">
     ${
       silhouetteData
-        ? `<image href="${silhouetteData}" x="0" y="0" width="${avatarWidth}" height="${avatarHeight}" />`
+        ? `<image href="${silhouetteData}" x="0" y="0" width="${avatarWidth}" height="${avatarHeight}" ${
+            avatarConfig.tintColor ? 'filter="url(#landscape-tint)"' : ''
+          }/>`
         : `<circle cx="${avatarWidth / 2}" cy="${avatarHeight * 0.4}" r="${avatarWidth * 0.18}" fill="${escapeXml(tint)}"/>
            <ellipse cx="${avatarWidth / 2}" cy="${avatarHeight * 0.8}" rx="${avatarWidth * 0.28}" ry="${avatarHeight * 0.22}" fill="${escapeXml(tint)}"/>`
     }
@@ -655,19 +874,25 @@ export function buildLandscapeSvg(
  */
 export function buildCustomManifestSvg(
   manifest: CompositeManifest,
-  resolvedImages: Record<string, string>
+  resolvedImages: Record<string, string>,
+  targetWidth?: number,
+  targetHeight?: number
 ): string {
   const sortedLayers = [...manifest.layers].sort((a, b) => a.zIndex - b.zIndex);
+  const width = targetWidth || manifest.outputWidth || 512;
+  const height = targetHeight || manifest.outputHeight || 512;
+  const viewBox = `0 0 ${manifest.outputWidth || width} ${manifest.outputHeight || height}`;
+
   const layerSvgs = sortedLayers
     .map((layer) => {
       const imgData = resolvedImages[layer.itemId];
       if (!imgData) return '';
-      return `<image href="${imgData}" x="${layer.bounds.x}" y="${layer.bounds.y}" width="${layer.bounds.width}" height="${layer.bounds.height}" opacity="${layer.opacity}" />`;
+      return `<image href="${imgData}" x="${layer.bounds.x}" y="${layer.bounds.y}" width="${layer.bounds.width}" height="${layer.bounds.height}" opacity="${layer.opacity ?? 1}" />`;
     })
     .join('\n');
 
   return `
-<svg xmlns="http://www.w3.org/2000/svg" width="${manifest.outputWidth}" height="${manifest.outputHeight}" viewBox="0 0 ${manifest.outputWidth} ${manifest.outputHeight}">
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${viewBox}">
   ${layerSvgs}
 </svg>`.trim();
 }
@@ -781,7 +1006,7 @@ export async function updateHubUserLoadout(
 
 export async function handlePrerenderRequest(request: Request, env?: Env): Promise<Response> {
   const origin = request.headers.get('Origin');
-  const corsHeaders = getCorsHeaders(origin);
+  const corsHeaders = getPrerenderCorsHeaders(origin);
 
   // Handle preflight OPTIONS
   if (request.method === 'OPTIONS') {
@@ -850,7 +1075,8 @@ export async function handlePrerenderRequest(request: Request, env?: Env): Promi
     body.avatarConfig || rawLoadout.avatarConfig || { silhouetteId: '' };
   const frameId: string = body.frameId || rawLoadout.frameId || '';
   const backgroundId: string = body.backgroundId || rawLoadout.backgroundId || '';
-  const critters: CritterConfig[] = body.critters || rawLoadout.critters || [];
+  // Clamp critters to reasonable ceiling (SEC_0004)
+  const critters: CritterConfig[] = (body.critters || rawLoadout.critters || []).slice(0, 8);
   const landscapeConfig: LandscapeConfig = body.landscapeConfig ||
     rawLoadout.landscapeConfig || {
       landscapeId: '',
@@ -875,16 +1101,28 @@ export async function handlePrerenderRequest(request: Request, env?: Env): Promi
     if (c.critterId) assetIdsToFetch.add(c.critterId);
   }
 
-  if (body.manifest) {
+  if (body.manifest?.layers) {
+    body.manifest.layers = body.manifest.layers.slice(0, 25);
     for (const layer of body.manifest.layers) {
       if (layer.itemId) assetIdsToFetch.add(layer.itemId);
     }
   }
 
+  // Guard against resource exhaustion (SEC_0004)
+  if (assetIdsToFetch.size > 25) {
+    return new Response(
+      JSON.stringify({ error: 'Bad Request: Maximum number of cosmetic assets exceeded (limit: 25)' }),
+      {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      }
+    );
+  }
+
   const resolvedImages: Record<string, string> = {};
   await Promise.all(
     Array.from(assetIdsToFetch).map(async (id) => {
-      const asset = await fetchLayerAsset(id, env);
+      const asset = await fetchLayerAsset(id, env, body.assetUrls);
       if (asset) {
         resolvedImages[id] = asset.dataUri;
       }
@@ -892,14 +1130,18 @@ export async function handlePrerenderRequest(request: Request, env?: Env): Promi
   );
 
   // 4. Flatten and composite images into 3 distinct targets using WebAssembly
-  const chipSvg = buildChipSvg(avatarConfig, resolvedImages, frameId, backgroundId);
-  const profileSvg = buildProfileSvg(avatarConfig, frameId, backgroundId, critters, resolvedImages);
-  const landscapeSvg = buildLandscapeSvg(
-    avatarConfig,
-    landscapeConfig,
-    critters,
-    resolvedImages
-  );
+  // Supports custom manifests when provided (BUG_0004)
+  const chipSvg = body.manifest
+    ? buildCustomManifestSvg(body.manifest, resolvedImages, 128, 128)
+    : buildChipSvg(avatarConfig, resolvedImages, frameId, backgroundId);
+
+  const profileSvg = body.manifest
+    ? buildCustomManifestSvg(body.manifest, resolvedImages, 512, 512)
+    : buildProfileSvg(avatarConfig, frameId, backgroundId, critters, resolvedImages);
+
+  const landscapeSvg = body.manifest
+    ? buildCustomManifestSvg(body.manifest, resolvedImages, 1920, 1080)
+    : buildLandscapeSvg(avatarConfig, landscapeConfig, critters, resolvedImages);
 
   const [chipWebp, profileWebp, landscapeWebp] = await Promise.all([
     renderSvgToWebp(chipSvg, 128, 128, quality, env),
@@ -939,8 +1181,8 @@ export async function handlePrerenderRequest(request: Request, env?: Env): Promi
     version,
   };
 
-  // 6. Update hub.user_cosmetic_loadouts with latest render URLs
-  await updateHubUserLoadout(
+  // 6. Update hub.user_cosmetic_loadouts with latest render URLs and check result (BUG_0003)
+  const syncResult = await updateHubUserLoadout(
     userId,
     renderUrls,
     {
@@ -953,6 +1195,22 @@ export async function handlePrerenderRequest(request: Request, env?: Env): Promi
     env
   );
 
+  if (env?.SUPABASE_URL && !syncResult.success) {
+    return new Response(
+      JSON.stringify({
+        error: `Failed to synchronize loadout in hub.user_cosmetic_loadouts: ${syncResult.error}`,
+        userId,
+        version,
+        renderUrls,
+        persisted: false,
+      }),
+      {
+        status: 502,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      }
+    );
+  }
+
   const durationMs = Math.round(performance.now() - startTime);
 
   const responsePayload: PrerenderResponseData = {
@@ -960,6 +1218,7 @@ export async function handlePrerenderRequest(request: Request, env?: Env): Promi
     userId,
     version,
     renderUrls,
+    persisted: syncResult.success,
     targets: {
       chip: {
         size: chipWebp.buffer.byteLength,
@@ -1016,6 +1275,6 @@ export async function onRequestOptions(context: {
   const origin = context.request.headers.get('Origin');
   return new Response(null, {
     status: 204,
-    headers: getCorsHeaders(origin),
+    headers: getPrerenderCorsHeaders(origin),
   });
 }

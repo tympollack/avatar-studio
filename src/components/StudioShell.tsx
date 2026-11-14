@@ -304,6 +304,13 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
 
         // Attempt edge headless prerender pipeline for multi-resolution WebP generation
         try {
+          const assetUrls: Record<string, string> = {};
+          for (const [id, item] of Object.entries(state.catalogIndex)) {
+            if (item?.assetUrl) {
+              assetUrls[id] = item.assetUrl;
+            }
+          }
+
           const res = await fetch('/api/prerender', {
             method: 'POST',
             headers: {
@@ -318,6 +325,7 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
               avatarConfig: state.avatarConfig,
               critters: state.critters,
               landscapeConfig: state.landscapeConfig,
+              assetUrls,
             }),
           });
           if (res.ok) {

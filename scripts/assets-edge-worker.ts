@@ -143,7 +143,7 @@ export async function handleAssetRequest(request: Request, env?: Env): Promise<R
   }
 
   // Versioned outputs and prerendered composites receive immutable 1-year cache headers
-  if (key.startsWith('renders/') || /(?:^|\/)[a-f0-9]{8,}(?:\/|\.)/i.test(key)) {
+  if (key.startsWith('renders/') || /(?:^|\/)v\d+(?:\/|\.|$)/i.test(key)) {
     responseHeaders.set('Cache-Control', 'public, max-age=31536000, immutable');
   }
 

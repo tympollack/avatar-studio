@@ -132,4 +132,36 @@ describe('TASK-AVATAR-R2-CACHE-RULES: Cloudflare R2 Bindings, CDN Caching, and I
       'https://avatar.sunshade.icu'
     );
   });
+
+  it('restricts immutable caching to renders/ and explicit v[0-9]+ directories, not arbitrary hex keys', async () => {
+    const mockEnv = {
+      BUCKET: {
+        get: async (_key: string) => ({
+          body: new ReadableStream(),
+          httpEtag: '"mock-etag"',
+          writeHttpMetadata: (headers: Headers) => {
+            headers.set('Content-Type', 'image/png');
+          },
+        }),
+        head: async (_key: string) => ({
+          httpEtag: '"mock-etag"',
+          writeHttpMetadata: (headers: Headers) => {
+            headers.set('Content-Type', 'image/png');
+          },
+        }),
+      },
+    };
+
+    // Versioned path: receives immutable cache
+    const versionedReq = new Request('https://assets.sunshade.icu/assets/avatar/v2/banner.png');
+    const versionedRes = await handleAssetRequest(versionedReq, mockEnv);
+    expect(versionedRes.status).toBe(200);
+    expect(versionedRes.headers.get('Cache-Control')).toBe('public, max-age=31536000, immutable');
+
+    // Arbitrary hex filename: should NOT receive immutable cache header
+    const nonVersionedReq = new Request('https://assets.sunshade.icu/assets/avatar/a1b2c3d4e5f6.png');
+    const nonVersionedRes = await handleAssetRequest(nonVersionedReq, mockEnv);
+    expect(nonVersionedRes.status).toBe(200);
+    expect(nonVersionedRes.headers.get('Cache-Control')).toBeNull();
+  });
 });
