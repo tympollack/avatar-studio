@@ -149,6 +149,15 @@ export function getPrerenderCorsHeaders(
 let resvgInitialized = false;
 let webpInitialized = false;
 
+async function loadNodeModule(moduleName: string): Promise<any> {
+  try {
+    const dynamicImport = new Function('m', 'return import(m)');
+    return await dynamicImport(moduleName);
+  } catch {
+    return null;
+  }
+}
+
 export async function ensureWasmInitialized(env?: Env, requestUrl?: string): Promise<void> {
   if (!resvgInitialized) {
     if (env?.RESVG_WASM) {
@@ -187,19 +196,21 @@ export async function ensureWasmInitialized(env?: Env, requestUrl?: string): Pro
 
     if (!resvgInitialized) {
       try {
-        const fs = await import('node:fs');
-        const path = await import('node:path');
-        const candidates = [
-          path.resolve(process.cwd(), 'node_modules/@resvg/resvg-wasm/index_bg.wasm'),
-          path.resolve(process.cwd(), 'public/wasm/index_bg.wasm'),
-          path.resolve(process.cwd(), 'dist/wasm/index_bg.wasm'),
-        ];
-        for (const candidate of candidates) {
-          if (fs.existsSync(candidate)) {
-            const buffer = fs.readFileSync(candidate);
-            await initWasm(buffer);
-            resvgInitialized = true;
-            break;
+        const fs = await loadNodeModule('node:fs');
+        const path = await loadNodeModule('node:path');
+        if (fs && path) {
+          const candidates = [
+            path.resolve(process.cwd(), 'node_modules/@resvg/resvg-wasm/index_bg.wasm'),
+            path.resolve(process.cwd(), 'public/wasm/index_bg.wasm'),
+            path.resolve(process.cwd(), 'dist/wasm/index_bg.wasm'),
+          ];
+          for (const candidate of candidates) {
+            if (fs.existsSync(candidate)) {
+              const buffer = fs.readFileSync(candidate);
+              await initWasm(buffer);
+              resvgInitialized = true;
+              break;
+            }
           }
         }
       } catch {
@@ -251,23 +262,25 @@ export async function ensureWasmInitialized(env?: Env, requestUrl?: string): Pro
 
     if (!webpInitialized) {
       try {
-        const fs = await import('node:fs');
-        const path = await import('node:path');
-        const candidates = [
-          path.resolve(
-            process.cwd(),
-            'node_modules/@jsquash/webp/codec/enc/webp_enc_simd.wasm'
-          ),
-          path.resolve(process.cwd(), 'public/wasm/webp_enc_simd.wasm'),
-          path.resolve(process.cwd(), 'dist/wasm/webp_enc_simd.wasm'),
-        ];
-        for (const candidate of candidates) {
-          if (fs.existsSync(candidate)) {
-            const buffer = fs.readFileSync(candidate);
-            const module = await WebAssembly.compile(buffer);
-            await initWebp(module);
-            webpInitialized = true;
-            break;
+        const fs = await loadNodeModule('node:fs');
+        const path = await loadNodeModule('node:path');
+        if (fs && path) {
+          const candidates = [
+            path.resolve(
+              process.cwd(),
+              'node_modules/@jsquash/webp/codec/enc/webp_enc_simd.wasm'
+            ),
+            path.resolve(process.cwd(), 'public/wasm/webp_enc_simd.wasm'),
+            path.resolve(process.cwd(), 'dist/wasm/webp_enc_simd.wasm'),
+          ];
+          for (const candidate of candidates) {
+            if (fs.existsSync(candidate)) {
+              const buffer = fs.readFileSync(candidate);
+              const module = await WebAssembly.compile(buffer);
+              await initWebp(module);
+              webpInitialized = true;
+              break;
+            }
           }
         }
       } catch {
