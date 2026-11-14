@@ -26,7 +26,7 @@ import type { CanvasState } from '../store/canvasStore';
 import { useCanvasStore } from '../store/canvasStore';
 import { AvatarCanvasStage } from './canvas/AvatarCanvasStage';
 import { InspectorDrawer } from './inspector/InspectorDrawer';
-import type { CosmeticItem, UserCosmeticLoadout } from '../types/avatar';
+import type { CosmeticItem, UserCosmeticLoadout, RenderUrls } from '../types/avatar';
 import { normalizeLayerType } from '../types/avatar';
 import {
   exportAvatarBadges,
@@ -294,6 +294,45 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
           }
         }
 
+        const version = Date.now();
+        let renderUrls: RenderUrls = {
+          chip,
+          profile,
+          landscape: '',
+          version,
+        };
+
+        // Attempt edge headless prerender pipeline for multi-resolution WebP generation
+        try {
+          const res = await fetch('/api/prerender', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({
+              userId: session.user.id,
+              version,
+              frameId: state.frameId,
+              backgroundId: state.backgroundId,
+              avatarConfig: state.avatarConfig,
+              critters: state.critters,
+              landscapeConfig: state.landscapeConfig,
+            }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.renderUrls) {
+              renderUrls = data.renderUrls;
+            }
+          }
+        } catch (edgeErr) {
+          console.warn(
+            '[StudioEditor] Edge prerender pipeline unavailable, falling back to client badges:',
+            edgeErr
+          );
+        }
+
         const loadoutPayload = {
           userId: session.user.id,
           frameId: state.frameId,
@@ -301,12 +340,7 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
           avatarConfig: state.avatarConfig,
           critters: state.critters,
           landscapeConfig: state.landscapeConfig,
-          renderUrls: {
-            chip,
-            profile,
-            landscape: '',
-            version: Date.now(),
-          },
+          renderUrls,
         };
 
         const { error } = await supabase
@@ -315,6 +349,9 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
           .upsert({
             user_id: session.user.id,
             loadout: loadoutPayload,
+            render_chip_url: renderUrls.chip,
+            render_profile_url: renderUrls.profile,
+            render_landscape_url: renderUrls.landscape,
             updated_at: new Date().toISOString(),
           });
 
