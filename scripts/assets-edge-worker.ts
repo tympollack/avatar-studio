@@ -4,12 +4,12 @@
  * Cloudflare Worker / Edge Router for assets.sunshade.icu.
  *
  * Deployment Note:
- * This worker runs independently at the Cloudflare edge to serve public assets from the `sunshade-assets`
+ * This worker runs independently at the Cloudflare edge to serve public assets from the `sunshade-public-assets`
  * R2 bucket. It is provisioned and deployed via Cloudflare Workers CLI (`wrangler deploy`)
  * with the `BUCKET` R2 binding configured in the Cloudflare Dashboard / wrangler.toml.
  * The core `avatar-studio` application is deployed separately to Cloudflare Pages.
  *
- * Fronts the Cloudflare R2 bucket `sunshade-assets`, ensuring:
+ * Fronts the Cloudflare R2 bucket `sunshade-public-assets`, ensuring:
  * 1. Preflight OPTIONS requests respond immediately with HTTP 204 and standard CORS headers.
  * 2. GET/HEAD asset requests from allowed origins (avatar.sunshade.icu, hub.sunshade.icu,
  *    cozy.sunshade.icu, localhost) receive permissive CORS response headers.

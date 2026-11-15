@@ -9,7 +9,7 @@ pages_build_output_dir = "dist"
 # Native Cloudflare R2 Bucket Binding for asset ingestion and prerender outputs
 [[r2_buckets]]
 binding = "AVATAR_BUCKET"
-bucket_name = "sunshade-assets"
+bucket_name = "sunshade-public-assets"
 
 # Environment variables
 [vars]

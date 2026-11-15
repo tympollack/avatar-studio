@@ -3,7 +3,7 @@
  * @module scripts/apply-r2-cors
  *
  * Applies the permissive CORS policy in config/r2-cors.json to Cloudflare R2 bucket.
- * Bucket defaults to 'sunshade-assets' or $R2_BUCKET.
+ * Bucket defaults to 'sunshade-public-assets' or $R2_BUCKET.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -16,7 +16,7 @@ const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..');
 const CORS_FILE = path.resolve(REPO_ROOT, 'config/r2-cors.json');
 
-const BUCKET = process.env.R2_BUCKET || 'sunshade-assets';
+const BUCKET = process.env.R2_BUCKET || 'sunshade-public-assets';
 
 // Validate bucket name to prevent command injection
 if (!/^[a-z0-9._-]+$/i.test(BUCKET)) {

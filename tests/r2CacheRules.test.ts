@@ -26,7 +26,7 @@ describe('TASK-AVATAR-R2-CACHE-RULES: Cloudflare R2 Bindings, CDN Caching, and I
     // R2 Bucket binding
     expect(content).toMatch(/\[\[r2_buckets\]\]/);
     expect(content).toMatch(/binding\s*=\s*["']AVATAR_BUCKET["']/);
-    expect(content).toMatch(/bucket_name\s*=\s*["']sunshade-assets["']/);
+    expect(content).toMatch(/bucket_name\s*=\s*["']sunshade-public-assets["']/);
 
     // Nodejs compatibility flag for isolates
     expect(content).toMatch(/compatibility_flags\s*=\s*\[.*"nodejs_compat".*\]/);
