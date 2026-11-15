@@ -1,0 +1,18 @@
+# Cloudflare Pages & Workers Configuration for SunShade Avatar Studio
+# STORY-AVATAR-PRERENDER-PIPELINE: Headless Pre-Rendering & Cloudflare R2 Pipeline
+
+name = "avatar-studio"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "dist"
+
+# Native Cloudflare R2 Bucket Binding for asset ingestion and prerender outputs
+[[r2_buckets]]
+binding = "AVATAR_BUCKET"
+bucket_name = "sunshade-public-assets"
+
+# Environment variables
+[vars]
+PUBLIC_CDN_URL = "https://assets.sunshade.icu"
+MEDIA_CDN_URL = "https://media.sunshade.icu"
+SUPABASE_URL = "https://db.sunshade.icu"

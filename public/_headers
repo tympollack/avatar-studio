@@ -1,3 +1,13 @@
+# Versioned Prerender Outputs (TASK-AVATAR-R2-CACHE-RULES)
+/renders/*
+  Cache-Control: public, max-age=31536000, immutable
+  Access-Control-Allow-Origin: *
+  Access-Control-Allow-Methods: GET, HEAD, OPTIONS
+  Access-Control-Allow-Headers: *
+  Access-Control-Expose-Headers: ETag, Content-Type, Cache-Control
+  Access-Control-Max-Age: 86400
+  X-Content-Type-Options: nosniff
+
 # Public asset CORS rules for Avatar Studio static assets
 /assets/*
   Access-Control-Allow-Origin: *

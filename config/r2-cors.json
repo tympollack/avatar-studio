@@ -1,9 +1,12 @@
 [
   {
     "AllowedOrigins": [
+      "https://*.sunshade.icu",
       "https://avatar.sunshade.icu",
       "https://hub.sunshade.icu",
       "https://cozy.sunshade.icu",
+      "https://assets.sunshade.icu",
+      "https://media.sunshade.icu",
       "http://localhost:*"
     ],
     "AllowedMethods": [

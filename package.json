@@ -25,6 +25,8 @@
   },
   "dependencies": {
     "@digitalcanopy/ui": "^0.1.2",
+    "@jsquash/webp": "^1.5.0",
+    "@resvg/resvg-wasm": "^2.6.2",
     "@supabase/supabase-js": "^2.117.2",
     "clsx": "^2.1.1",
     "konva": "^10.7.0",

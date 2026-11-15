@@ -4,12 +4,12 @@
  * Cloudflare Worker / Edge Router for assets.sunshade.icu.
  *
  * Deployment Note:
- * This worker runs independently at the Cloudflare edge to serve public assets from the `sunshade-assets`
+ * This worker runs independently at the Cloudflare edge to serve public assets from the `sunshade-public-assets`
  * R2 bucket. It is provisioned and deployed via Cloudflare Workers CLI (`wrangler deploy`)
  * with the `BUCKET` R2 binding configured in the Cloudflare Dashboard / wrangler.toml.
  * The core `avatar-studio` application is deployed separately to Cloudflare Pages.
  *
- * Fronts the Cloudflare R2 bucket `sunshade-assets`, ensuring:
+ * Fronts the Cloudflare R2 bucket `sunshade-public-assets`, ensuring:
  * 1. Preflight OPTIONS requests respond immediately with HTTP 204 and standard CORS headers.
  * 2. GET/HEAD asset requests from allowed origins (avatar.sunshade.icu, hub.sunshade.icu,
  *    cozy.sunshade.icu, localhost) receive permissive CORS response headers.
@@ -24,17 +24,16 @@ export interface Env {
 }
 
 export const ALLOWED_ORIGIN_PATTERNS = [
-  /^https:\/\/avatar\.sunshade\.icu$/,
-  /^https:\/\/hub\.sunshade\.icu$/,
-  /^https:\/\/cozy\.sunshade\.icu$/,
+  /^https:\/\/(?:[a-zA-Z0-9_\-]+\.)?sunshade\.icu$/,
   /^http:\/\/localhost(:\d+)?$/,
+  /^http:\/\/127\.0\.0\.1(:\d+)?$/,
 ];
 
 export const UNPUBLISHED_PATH_REGEX =
   /(?:^|\/)(?:\.|\.\.|draft|unpublished|private|internal|admin|secrets?|credentials?)(?:\/|$)/i;
 
 export const PUBLIC_ASSET_REGEX =
-  /^(?:assets\/)?(?:kenney|avatar|critters|landscapes|frames|backgrounds)\/(?:[a-zA-Z0-9_\-][a-zA-Z0-9_.\- ]*\/)*[a-zA-Z0-9_\-][a-zA-Z0-9_.\- ]*\.(?:png|svg|webp|jpe?g|gif|json|woff2?|mp3|ogg|wav)$/i;
+  /^(?:assets\/)?(?:kenney|avatar|critters|landscapes|frames|backgrounds|renders)\/(?:[a-zA-Z0-9_\-][a-zA-Z0-9_.\- ]*\/)*[a-zA-Z0-9_\-][a-zA-Z0-9_.\- ]*\.(?:png|svg|webp|jpe?g|gif|json|woff2?|mp3|ogg|wav)$/i;
 
 export function isOriginAllowed(origin: string | null | undefined): boolean {
   if (!origin) return false;
@@ -141,6 +140,11 @@ export async function handleAssetRequest(request: Request, env?: Env): Promise<R
   responseHeaders.set('etag', object.httpEtag ?? '');
   for (const [k, v] of Object.entries(corsHeaders)) {
     responseHeaders.set(k, v);
+  }
+
+  // Versioned outputs and prerendered composites receive immutable 1-year cache headers
+  if (key.startsWith('renders/') || /(?:^|\/)v\d+(?:\/|\.|$)/i.test(key)) {
+    responseHeaders.set('Cache-Control', 'public, max-age=31536000, immutable');
   }
 
   return new Response(request.method === 'HEAD' ? null : object.body, {
