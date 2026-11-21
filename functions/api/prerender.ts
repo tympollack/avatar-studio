@@ -33,6 +33,7 @@ import type {
   LandscapeConfig,
 } from '../../src/types/avatar';
 import { isOriginAllowed } from '../../scripts/assets-edge-worker';
+import { resolveManifestAssetUrl } from '../../src/utils/assetManifest';
 
 // ──────────────────────────────────────────────
 // Interfaces & Bindings
@@ -443,6 +444,7 @@ export async function fetchLayerAsset(
 
   let candidateKey = assetIdOrUrl;
   let mappedPath: string | null = null;
+  let manifestFallbackUrl: string | undefined;
 
   if (assetUrls?.[assetIdOrUrl]) {
     try {
@@ -450,6 +452,15 @@ export async function fetchLayerAsset(
       mappedPath = parsed.pathname.replace(/^\/+/, '');
     } catch {
       mappedPath = assetUrls[assetIdOrUrl].replace(/^\/+/, '');
+    }
+  } else if (!assetIdOrUrl.startsWith('http://') && !assetIdOrUrl.startsWith('https://')) {
+    manifestFallbackUrl = resolveManifestAssetUrl(assetIdOrUrl);
+    if (manifestFallbackUrl) {
+      try {
+        mappedPath = new URL(manifestFallbackUrl).pathname.replace(/^\/+/, '');
+      } catch {
+        mappedPath = manifestFallbackUrl.replace(/^\/+/, '');
+      }
     }
   }
 
@@ -546,13 +557,18 @@ export async function fetchLayerAsset(
   }
 
   // If remote URL and fetch is available, perform SSRF check before requesting
-  if (assetIdOrUrl.startsWith('http://') || assetIdOrUrl.startsWith('https://')) {
-    if (!isAllowedRemoteUrl(assetIdOrUrl)) {
+  const remoteTargetUrl =
+    assetIdOrUrl.startsWith('http://') || assetIdOrUrl.startsWith('https://')
+      ? assetIdOrUrl
+      : manifestFallbackUrl;
+
+  if (remoteTargetUrl && (remoteTargetUrl.startsWith('http://') || remoteTargetUrl.startsWith('https://'))) {
+    if (!isAllowedRemoteUrl(remoteTargetUrl)) {
       return null;
     }
 
     try {
-      const res = await fetch(assetIdOrUrl);
+      const res = await fetch(remoteTargetUrl);
       if (res.ok) {
         const mime = res.headers.get('content-type') || 'image/png';
         const buffer = await res.arrayBuffer();
@@ -628,6 +644,51 @@ function buildTintFilterDef(filterId: string, tintColor?: string): string {
   `.trim();
 }
 
+const PRERENDER_OVERLAY_SLOTS: readonly (keyof Pick<
+  AvatarConfig,
+  | 'pantsId'
+  | 'shoesId'
+  | 'clothingId'
+  | 'faceId'
+  | 'eyesId'
+  | 'mouthId'
+  | 'hairId'
+  | 'hatId'
+  | 'accessoryId'
+  | 'handRigId'
+>)[] = [
+  'pantsId',
+  'shoesId',
+  'clothingId',
+  'faceId',
+  'eyesId',
+  'mouthId',
+  'hairId',
+  'hatId',
+  'accessoryId',
+  'handRigId',
+];
+
+function renderAvatarOverlayImages(
+  avatarConfig: AvatarConfig,
+  resolvedImages: Record<string, string>,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  includeHandRig = false
+): string {
+  return PRERENDER_OVERLAY_SLOTS
+    .filter((slot) => includeHandRig || slot !== 'handRigId')
+    .map((slot) => {
+      const id = avatarConfig[slot];
+      const data = id ? resolvedImages[id] : null;
+      return data ? `<image href="${data}" x="${x}" y="${y}" width="${width}" height="${height}" />` : '';
+    })
+    .filter(Boolean)
+    .join('\n    ');
+}
+
 /**
  * Builds the 128×128 circular avatar badge SVG.
  */
@@ -639,12 +700,6 @@ export function buildChipSvg(
 ): string {
   const tint = avatarConfig.tintColor || '#38bdf8';
   const silhouetteData = resolvedImages[avatarConfig.silhouetteId];
-  const clothingData = avatarConfig.clothingId ? resolvedImages[avatarConfig.clothingId] : null;
-  const eyesData = avatarConfig.eyesId ? resolvedImages[avatarConfig.eyesId] : null;
-  const mouthData = avatarConfig.mouthId ? resolvedImages[avatarConfig.mouthId] : null;
-  const hairData = avatarConfig.hairId ? resolvedImages[avatarConfig.hairId] : null;
-  const hatData = avatarConfig.hatId ? resolvedImages[avatarConfig.hatId] : null;
-  const accessoryData = avatarConfig.accessoryId ? resolvedImages[avatarConfig.accessoryId] : null;
 
   return `
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
@@ -673,12 +728,7 @@ export function buildChipSvg(
            <circle cx="64" cy="50" r="22" fill="${escapeXml(tint)}"/>
            <ellipse cx="64" cy="94" rx="34" ry="24" fill="${escapeXml(tint)}"/>`
     }
-    ${clothingData ? `<image href="${clothingData}" x="16" y="16" width="96" height="96" />` : ''}
-    ${eyesData ? `<image href="${eyesData}" x="16" y="16" width="96" height="96" />` : ''}
-    ${mouthData ? `<image href="${mouthData}" x="16" y="16" width="96" height="96" />` : ''}
-    ${hairData ? `<image href="${hairData}" x="16" y="16" width="96" height="96" />` : ''}
-    ${hatData ? `<image href="${hatData}" x="16" y="16" width="96" height="96" />` : ''}
-    ${accessoryData ? `<image href="${accessoryData}" x="16" y="16" width="96" height="96" />` : ''}
+    ${renderAvatarOverlayImages(avatarConfig, resolvedImages, 16, 16, 96, 96)}
   </g>
 
   <!-- Circular Badge Border -->
@@ -700,13 +750,6 @@ export function buildProfileSvg(
   const bgData = backgroundId ? resolvedImages[backgroundId] : null;
   const frameData = frameId ? resolvedImages[frameId] : null;
   const silhouetteData = resolvedImages[avatarConfig.silhouetteId];
-  const clothingData = avatarConfig.clothingId ? resolvedImages[avatarConfig.clothingId] : null;
-  const eyesData = avatarConfig.eyesId ? resolvedImages[avatarConfig.eyesId] : null;
-  const mouthData = avatarConfig.mouthId ? resolvedImages[avatarConfig.mouthId] : null;
-  const hairData = avatarConfig.hairId ? resolvedImages[avatarConfig.hairId] : null;
-  const hatData = avatarConfig.hatId ? resolvedImages[avatarConfig.hatId] : null;
-  const accessoryData = avatarConfig.accessoryId ? resolvedImages[avatarConfig.accessoryId] : null;
-  const handRigData = avatarConfig.handRigId ? resolvedImages[avatarConfig.handRigId] : null;
 
   // Critter placement logic
   const critterSvgs = critters
@@ -770,13 +813,7 @@ export function buildProfileSvg(
            <circle cx="256" cy="200" r="88" fill="${escapeXml(tint)}"/>
            <ellipse cx="256" cy="380" rx="140" ry="100" fill="${escapeXml(tint)}"/>`
     }
-    ${clothingData ? `<image href="${clothingData}" x="56" y="56" width="400" height="400" />` : ''}
-    ${eyesData ? `<image href="${eyesData}" x="56" y="56" width="400" height="400" />` : ''}
-    ${mouthData ? `<image href="${mouthData}" x="56" y="56" width="400" height="400" />` : ''}
-    ${hairData ? `<image href="${hairData}" x="56" y="56" width="400" height="400" />` : ''}
-    ${hatData ? `<image href="${hatData}" x="56" y="56" width="400" height="400" />` : ''}
-    ${accessoryData ? `<image href="${accessoryData}" x="56" y="56" width="400" height="400" />` : ''}
-    ${handRigData ? `<image href="${handRigData}" x="56" y="56" width="400" height="400" />` : ''}
+    ${renderAvatarOverlayImages(avatarConfig, resolvedImages, 56, 56, 400, 400, true)}
   </g>
 
   <!-- Attached Critters -->
@@ -814,12 +851,6 @@ export function buildLandscapeSvg(
 
   const tint = avatarConfig.tintColor || '#38bdf8';
   const silhouetteData = resolvedImages[avatarConfig.silhouetteId];
-  const clothingData = avatarConfig.clothingId ? resolvedImages[avatarConfig.clothingId] : null;
-  const eyesData = avatarConfig.eyesId ? resolvedImages[avatarConfig.eyesId] : null;
-  const mouthData = avatarConfig.mouthId ? resolvedImages[avatarConfig.mouthId] : null;
-  const hairData = avatarConfig.hairId ? resolvedImages[avatarConfig.hairId] : null;
-  const hatData = avatarConfig.hatId ? resolvedImages[avatarConfig.hatId] : null;
-  const accessoryData = avatarConfig.accessoryId ? resolvedImages[avatarConfig.accessoryId] : null;
 
   return `
 <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
@@ -862,12 +893,7 @@ export function buildLandscapeSvg(
         : `<circle cx="${avatarWidth / 2}" cy="${avatarHeight * 0.4}" r="${avatarWidth * 0.18}" fill="${escapeXml(tint)}"/>
            <ellipse cx="${avatarWidth / 2}" cy="${avatarHeight * 0.8}" rx="${avatarWidth * 0.28}" ry="${avatarHeight * 0.22}" fill="${escapeXml(tint)}"/>`
     }
-    ${clothingData ? `<image href="${clothingData}" x="0" y="0" width="${avatarWidth}" height="${avatarHeight}" />` : ''}
-    ${eyesData ? `<image href="${eyesData}" x="0" y="0" width="${avatarWidth}" height="${avatarHeight}" />` : ''}
-    ${mouthData ? `<image href="${mouthData}" x="0" y="0" width="${avatarWidth}" height="${avatarHeight}" />` : ''}
-    ${hairData ? `<image href="${hairData}" x="0" y="0" width="${avatarWidth}" height="${avatarHeight}" />` : ''}
-    ${hatData ? `<image href="${hatData}" x="0" y="0" width="${avatarWidth}" height="${avatarHeight}" />` : ''}
-    ${accessoryData ? `<image href="${accessoryData}" x="0" y="0" width="${avatarWidth}" height="${avatarHeight}" />` : ''}
+    ${renderAvatarOverlayImages(avatarConfig, resolvedImages, 0, 0, avatarWidth, avatarHeight)}
 
     <!-- Critters on Scene -->
     ${critters
@@ -1100,13 +1126,10 @@ export async function handlePrerenderRequest(request: Request, env?: Env): Promi
   // 3. Collect & Fetch source layer assets from R2 private asset prefix
   const assetIdsToFetch = new Set<string>();
   if (avatarConfig.silhouetteId) assetIdsToFetch.add(avatarConfig.silhouetteId);
-  if (avatarConfig.clothingId) assetIdsToFetch.add(avatarConfig.clothingId);
-  if (avatarConfig.eyesId) assetIdsToFetch.add(avatarConfig.eyesId);
-  if (avatarConfig.mouthId) assetIdsToFetch.add(avatarConfig.mouthId);
-  if (avatarConfig.hairId) assetIdsToFetch.add(avatarConfig.hairId);
-  if (avatarConfig.hatId) assetIdsToFetch.add(avatarConfig.hatId);
-  if (avatarConfig.accessoryId) assetIdsToFetch.add(avatarConfig.accessoryId);
-  if (avatarConfig.handRigId) assetIdsToFetch.add(avatarConfig.handRigId);
+  for (const slot of PRERENDER_OVERLAY_SLOTS) {
+    const slotId = avatarConfig[slot];
+    if (slotId) assetIdsToFetch.add(slotId);
+  }
   if (frameId) assetIdsToFetch.add(frameId);
   if (backgroundId) assetIdsToFetch.add(backgroundId);
   if (landscapeConfig.landscapeId) assetIdsToFetch.add(landscapeConfig.landscapeId);

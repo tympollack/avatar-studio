@@ -41,6 +41,8 @@ export function getSlotIcon(layerType: CosmeticLayerType): React.ComponentType<{
     case 'avatar_body':
     case 'avatar_base':
       return User;
+    case 'avatar_face':
+      return Smile;
     case 'avatar_eyes':
       return Eye;
     case 'avatar_mouth':
@@ -49,6 +51,8 @@ export function getSlotIcon(layerType: CosmeticLayerType): React.ComponentType<{
       return Scissors;
     case 'avatar_clothing':
     case 'avatar_outfit':
+    case 'avatar_pants':
+    case 'avatar_shoes':
       return Shirt;
     case 'avatar_hat':
       return Crown;

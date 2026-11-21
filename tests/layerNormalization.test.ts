@@ -3,6 +3,8 @@ import { normalizeLayerType } from '../src/types/avatar';
 describe('normalizeLayerType', () => {
   it('normalizes base body layer variations', () => {
     expect(normalizeLayerType('base')).toBe('avatar_base');
+    expect(normalizeLayerType('skin')).toBe('avatar_base');
+    expect(normalizeLayerType('skins')).toBe('avatar_base');
     expect(normalizeLayerType('avatar_base')).toBe('avatar_base');
     expect(normalizeLayerType('avatar-base')).toBe('avatar_base');
     expect(normalizeLayerType('body')).toBe('avatar_body');
@@ -10,6 +12,9 @@ describe('normalizeLayerType', () => {
   });
 
   it('normalizes facial feature variations', () => {
+    expect(normalizeLayerType('face')).toBe('avatar_face');
+    expect(normalizeLayerType('faces')).toBe('avatar_face');
+    expect(normalizeLayerType('avatar_face')).toBe('avatar_face');
     expect(normalizeLayerType('hair')).toBe('avatar_hair');
     expect(normalizeLayerType('avatar_hair')).toBe('avatar_hair');
     expect(normalizeLayerType('eyes')).toBe('avatar_eyes');
@@ -18,12 +23,18 @@ describe('normalizeLayerType', () => {
     expect(normalizeLayerType('avatar_mouth')).toBe('avatar_mouth');
   });
 
-  it('normalizes garments, hats, and accessories', () => {
+  it('normalizes garments, pants, shoes, hats, and accessories', () => {
     expect(normalizeLayerType('clothing')).toBe('avatar_clothing');
     expect(normalizeLayerType('garment')).toBe('avatar_clothing');
     expect(normalizeLayerType('garments')).toBe('avatar_clothing');
+    expect(normalizeLayerType('shirts')).toBe('avatar_clothing');
+    expect(normalizeLayerType('shirt')).toBe('avatar_clothing');
     expect(normalizeLayerType('outfit')).toBe('avatar_outfit');
     expect(normalizeLayerType('outfits')).toBe('avatar_outfit');
+    expect(normalizeLayerType('pants')).toBe('avatar_pants');
+    expect(normalizeLayerType('pant')).toBe('avatar_pants');
+    expect(normalizeLayerType('shoes')).toBe('avatar_shoes');
+    expect(normalizeLayerType('shoe')).toBe('avatar_shoes');
     expect(normalizeLayerType('hat')).toBe('avatar_hat');
     expect(normalizeLayerType('hats')).toBe('avatar_hat');
     expect(normalizeLayerType('headwear')).toBe('avatar_hat');

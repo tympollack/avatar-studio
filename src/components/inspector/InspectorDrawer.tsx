@@ -27,6 +27,7 @@ import type { InspectorTab } from './useInspectorTabs';
 import { AssetGrid } from './AssetGrid';
 import { TintPicker } from './TintPicker';
 import type { CosmeticItem, CosmeticLayerType, CritterPerchLocation } from '../../types/avatar';
+import type { AvatarConfigSlotKey } from '../../utils/assetManifest';
 
 // ──────────────────────────────────────────────
 // Tab → layer type mapping
@@ -43,11 +44,14 @@ const TAB_LAYER_TYPES: Record<InspectorTab, CosmeticLayerType[]> = {
   Avatar: [
     'avatar_body',
     'avatar_base',
+    'avatar_face',
     'avatar_eyes',
     'avatar_mouth',
     'avatar_hair',
     'avatar_clothing',
     'avatar_outfit',
+    'avatar_pants',
+    'avatar_shoes',
     'avatar_hat',
     'avatar_accessory',
     'avatar_hand',
@@ -59,10 +63,13 @@ const TAB_LAYER_TYPES: Record<InspectorTab, CosmeticLayerType[]> = {
 export type AvatarSubcategory =
   | 'All'
   | 'Base'
+  | 'Face'
   | 'Eyes'
   | 'Mouth'
   | 'Hair'
   | 'Garments'
+  | 'Pants'
+  | 'Shoes'
   | 'Hats'
   | 'Accessories'
   | 'Hands';
@@ -70,10 +77,13 @@ export type AvatarSubcategory =
 const AVATAR_SUBCATEGORIES: AvatarSubcategory[] = [
   'All',
   'Base',
+  'Face',
   'Eyes',
   'Mouth',
   'Hair',
   'Garments',
+  'Pants',
+  'Shoes',
   'Hats',
   'Accessories',
   'Hands',
@@ -83,23 +93,45 @@ const SUBCATEGORY_LAYER_MAP: Record<AvatarSubcategory, CosmeticLayerType[]> = {
   All: [
     'avatar_body',
     'avatar_base',
+    'avatar_face',
     'avatar_eyes',
     'avatar_mouth',
     'avatar_hair',
     'avatar_clothing',
     'avatar_outfit',
+    'avatar_pants',
+    'avatar_shoes',
     'avatar_hat',
     'avatar_accessory',
     'avatar_hand',
   ],
   Base: ['avatar_body', 'avatar_base'],
+  Face: ['avatar_face'],
   Eyes: ['avatar_eyes'],
   Mouth: ['avatar_mouth'],
   Hair: ['avatar_hair'],
   Garments: ['avatar_clothing', 'avatar_outfit'],
+  Pants: ['avatar_pants'],
+  Shoes: ['avatar_shoes'],
   Hats: ['avatar_hat'],
   Accessories: ['avatar_accessory'],
   Hands: ['avatar_hand'],
+};
+
+const AVATAR_LAYER_TO_CONFIG_FIELD: Partial<Record<CosmeticLayerType, AvatarConfigSlotKey>> = {
+  avatar_body: 'silhouetteId',
+  avatar_base: 'silhouetteId',
+  avatar_face: 'faceId',
+  avatar_eyes: 'eyesId',
+  avatar_mouth: 'mouthId',
+  avatar_hair: 'hairId',
+  avatar_clothing: 'clothingId',
+  avatar_outfit: 'clothingId',
+  avatar_pants: 'pantsId',
+  avatar_shoes: 'shoesId',
+  avatar_hat: 'hatId',
+  avatar_accessory: 'accessoryId',
+  avatar_hand: 'handRigId',
 };
 
 // ──────────────────────────────────────────────
@@ -229,22 +261,9 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
       case 'Avatar': {
         const item = state.catalogIndex[id];
         if (!item) break;
-        if (item.layerType === 'avatar_body' || item.layerType === 'avatar_base') {
-          dispatch({ type: 'SET_AVATAR_CONFIG', config: { silhouetteId: id } });
-        } else if (item.layerType === 'avatar_eyes') {
-          dispatch({ type: 'SET_AVATAR_CONFIG', config: { eyesId: id } });
-        } else if (item.layerType === 'avatar_mouth') {
-          dispatch({ type: 'SET_AVATAR_CONFIG', config: { mouthId: id } });
-        } else if (item.layerType === 'avatar_hair') {
-          dispatch({ type: 'SET_AVATAR_CONFIG', config: { hairId: id } });
-        } else if (item.layerType === 'avatar_clothing' || item.layerType === 'avatar_outfit') {
-          dispatch({ type: 'SET_AVATAR_CONFIG', config: { clothingId: id } });
-        } else if (item.layerType === 'avatar_hat') {
-          dispatch({ type: 'SET_AVATAR_CONFIG', config: { hatId: id } });
-        } else if (item.layerType === 'avatar_accessory') {
-          dispatch({ type: 'SET_AVATAR_CONFIG', config: { accessoryId: id } });
-        } else if (item.layerType === 'avatar_hand') {
-          dispatch({ type: 'SET_AVATAR_CONFIG', config: { handRigId: id } });
+        const field = AVATAR_LAYER_TO_CONFIG_FIELD[item.layerType];
+        if (field) {
+          dispatch({ type: 'SET_AVATAR_CONFIG', config: { [field]: id } });
         }
         break;
       }
@@ -334,19 +353,8 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
       case 'Background':
         return item.id === state.backgroundId;
       case 'Avatar': {
-        if (item.layerType === 'avatar_body' || item.layerType === 'avatar_base') {
-          return item.id === state.avatarConfig.silhouetteId;
-        }
-        if (item.layerType === 'avatar_eyes') return item.id === state.avatarConfig.eyesId;
-        if (item.layerType === 'avatar_mouth') return item.id === state.avatarConfig.mouthId;
-        if (item.layerType === 'avatar_hair') return item.id === state.avatarConfig.hairId;
-        if (item.layerType === 'avatar_clothing' || item.layerType === 'avatar_outfit') {
-          return item.id === state.avatarConfig.clothingId;
-        }
-        if (item.layerType === 'avatar_hat') return item.id === state.avatarConfig.hatId;
-        if (item.layerType === 'avatar_accessory') return item.id === state.avatarConfig.accessoryId;
-        if (item.layerType === 'avatar_hand') return item.id === state.avatarConfig.handRigId;
-        return false;
+        const field = AVATAR_LAYER_TO_CONFIG_FIELD[item.layerType];
+        return field ? item.id === state.avatarConfig[field] : false;
       }
       case 'Companion':
         return state.critters.some((c) => c.critterId === item.id);
