@@ -24,6 +24,7 @@
     "deploy:production": "wrangler pages deploy dist --project-name=avatar-studio --branch=main"
   },
   "dependencies": {
+    "@digitalcanopy/assets": "^1.1.0",
     "@digitalcanopy/ui": "^0.1.2",
     "@jsquash/webp": "^1.5.0",
     "@resvg/resvg-wasm": "^2.6.2",

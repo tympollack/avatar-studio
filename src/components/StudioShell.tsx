@@ -34,6 +34,10 @@ import {
   preloadImages,
   waitForStageReadiness,
 } from '../utils/exportBadge';
+import {
+  buildKenneyManifestCatalog,
+  resolveManifestAssetUrl,
+} from '../utils/assetManifest';
 
 export { ToastWarning };
 
@@ -94,7 +98,12 @@ const CatalogLoader: React.FC<CatalogLoaderProps> = ({ userId, onWarning }) => {
           onWarning?.('Some modular assets from catalog CDN could not be loaded.');
         }
       }
-      if (!catalogData && !hubData) return;
+
+      const itemMap = new Map<string, CosmeticItem>();
+      // Seed baseline items from @digitalcanopy/assets R2 manifests first
+      for (const manifestItem of buildKenneyManifestCatalog()) {
+        itemMap.set(manifestItem.id, manifestItem);
+      }
 
       type CatalogAssetRow = {
         id: string;
@@ -115,7 +124,10 @@ const CatalogLoader: React.FC<CatalogLoaderProps> = ({ userId, onWarning }) => {
           row.asset_key.replace(/^avatar-/, '').replace(/-/g, ' '),
         assetUrl: row.cdn_url,
         rarity: ((row.metadata?.rarity as string) ?? 'standard') as CosmeticItem['rarity'],
-        metadata: (row.metadata ?? {}) as Record<string, unknown>,
+        metadata: {
+          ...(row.metadata ?? {}),
+          asset_key: row.asset_key,
+        },
       }));
 
       type HubCatalogRow = {
@@ -138,7 +150,6 @@ const CatalogLoader: React.FC<CatalogLoaderProps> = ({ userId, onWarning }) => {
         metadata: (row.metadata ?? {}) as Record<string, unknown>,
       }));
 
-      const itemMap = new Map<string, CosmeticItem>();
       for (const item of catalogItems) {
         itemMap.set(item.id, item);
       }
@@ -231,10 +242,13 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
       { slot: 'background', id: currentState.backgroundId },
       { slot: 'landscape', id: currentState.landscapeConfig.landscapeId },
       { slot: 'silhouette', id: currentState.avatarConfig.silhouetteId },
+      { slot: 'pants', id: currentState.avatarConfig.pantsId },
+      { slot: 'shoes', id: currentState.avatarConfig.shoesId },
+      { slot: 'clothing', id: currentState.avatarConfig.clothingId },
+      { slot: 'face', id: currentState.avatarConfig.faceId },
       { slot: 'eyes', id: currentState.avatarConfig.eyesId },
       { slot: 'mouth', id: currentState.avatarConfig.mouthId },
       { slot: 'hair', id: currentState.avatarConfig.hairId },
-      { slot: 'clothing', id: currentState.avatarConfig.clothingId },
       { slot: 'hat', id: currentState.avatarConfig.hatId },
       { slot: 'accessory', id: currentState.avatarConfig.accessoryId },
       { slot: 'handRig', id: currentState.avatarConfig.handRigId },
@@ -247,11 +261,11 @@ const StudioEditor: React.FC<StudioEditorProps> = ({ session }) => {
 
     for (const { slot, id } of activeSlots) {
       if (id) {
-        const item = currentState.catalogIndex[id];
-        if (!item || !item.assetUrl) {
+        const resolvedUrl = resolveManifestAssetUrl(id, currentState.catalogIndex);
+        if (!resolvedUrl) {
           missingAssetIds.push(`${slot}:${id}`);
         } else {
-          urls.push(item.assetUrl);
+          urls.push(resolvedUrl);
         }
       }
     }
