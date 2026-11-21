@@ -22,11 +22,14 @@ export type CosmeticLayerType =
   | 'background'
   | 'avatar_body'
   | 'avatar_base'
+  | 'avatar_face'
   | 'avatar_eyes'
   | 'avatar_mouth'
   | 'avatar_hair'
   | 'avatar_clothing'
   | 'avatar_outfit'
+  | 'avatar_pants'
+  | 'avatar_shoes'
   | 'avatar_hat'
   | 'avatar_accessory'
   | 'avatar_hand'
@@ -50,11 +53,17 @@ export function normalizeLayerType(rawCategory: string | undefined | null): Cosm
   const clean = rawCategory.toLowerCase().trim().replace(/[- ]/g, '_');
   switch (clean) {
     case 'base':
+    case 'skin':
+    case 'skins':
     case 'avatar_base':
       return 'avatar_base';
     case 'body':
     case 'avatar_body':
       return 'avatar_body';
+    case 'face':
+    case 'faces':
+    case 'avatar_face':
+      return 'avatar_face';
     case 'hair':
     case 'avatar_hair':
       return 'avatar_hair';
@@ -68,12 +77,27 @@ export function normalizeLayerType(rawCategory: string | undefined | null): Cosm
     case 'clothing':
     case 'garment':
     case 'garments':
+    case 'shirt':
+    case 'shirts':
+    case 'top':
+    case 'tops':
     case 'avatar_clothing':
       return 'avatar_clothing';
     case 'outfit':
     case 'outfits':
     case 'avatar_outfit':
       return 'avatar_outfit';
+    case 'pant':
+    case 'pants':
+    case 'trousers':
+    case 'bottoms':
+    case 'avatar_pants':
+      return 'avatar_pants';
+    case 'shoe':
+    case 'shoes':
+    case 'footwear':
+    case 'avatar_shoes':
+      return 'avatar_shoes';
     case 'hat':
     case 'hats':
     case 'headwear':
@@ -159,6 +183,15 @@ export interface AvatarConfig {
 
   /** Optional clothing / garment overlay asset ID. */
   clothingId?: string;
+
+  /** Optional modular trousers / pants overlay asset ID. */
+  pantsId?: string;
+
+  /** Optional modular footwear / shoes overlay asset ID. */
+  shoesId?: string;
+
+  /** Optional modular face expression overlay asset ID. */
+  faceId?: string;
 
   /** Optional modular eyes asset ID. */
   eyesId?: string;

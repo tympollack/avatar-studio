@@ -28,6 +28,11 @@ import { useCanvasStore } from '../../store/canvasStore';
 import { CritterAnchorLayer } from './CritterAnchorLayer';
 import { clampNormalized } from '../../utils/coordinateMath';
 import { getCachedImage, loadImage } from '../../utils/imageLoader';
+import {
+  assembleAvatarLayers,
+  resolveManifestAssetUrl,
+  resolveSpriteCrop,
+} from '../../utils/assetManifest';
 
 // ──────────────────────────────────────────────
 // Virtual canvas constants
@@ -177,6 +182,7 @@ interface AssetImageLayerProps {
    */
   tintColor?: string;
   opacity?: number;
+  crop?: { x: number; y: number; width: number; height: number };
 }
 
 const AssetImageLayer: React.FC<AssetImageLayerProps> = ({
@@ -186,6 +192,7 @@ const AssetImageLayer: React.FC<AssetImageLayerProps> = ({
   size,
   tintColor,
   opacity = 1,
+  crop,
 }) => {
   const img = useImage(assetUrl);
   const nodeRef = useRef<Konva.Image>(null);
@@ -238,6 +245,7 @@ const AssetImageLayer: React.FC<AssetImageLayerProps> = ({
       y={0}
       width={size}
       height={size}
+      crop={crop}
       opacity={opacity}
     />
   );
@@ -306,34 +314,14 @@ export const AvatarCanvasStage: React.FC<AvatarCanvasStageProps> = ({
     });
   }, [stageRef]);
 
-  // ── Asset URL resolution ───────────────────
+  // ── Asset URL resolution & multi-layer assembly ──
   const bgItem = catalogIndex[backgroundId];
   const frameItem = catalogIndex[frameId];
-  const silhouetteItem = avatarConfig.silhouetteId
-    ? catalogIndex[avatarConfig.silhouetteId]
-    : undefined;
-  const eyesItem = avatarConfig.eyesId
-    ? catalogIndex[avatarConfig.eyesId]
-    : undefined;
-  const mouthItem = avatarConfig.mouthId
-    ? catalogIndex[avatarConfig.mouthId]
-    : undefined;
-  const hairItem = avatarConfig.hairId
-    ? catalogIndex[avatarConfig.hairId]
-    : undefined;
-  const clothingItem = avatarConfig.clothingId
-    ? catalogIndex[avatarConfig.clothingId]
-    : undefined;
-  const hatItem = avatarConfig.hatId
-    ? catalogIndex[avatarConfig.hatId]
-    : undefined;
-  const accessoryItem = avatarConfig.accessoryId
-    ? catalogIndex[avatarConfig.accessoryId]
-    : undefined;
-  const handRigItem = avatarConfig.handRigId
-    ? catalogIndex[avatarConfig.handRigId]
-    : undefined;
   const landscapeItem = catalogIndex[landscapeConfig.landscapeId];
+  const bgUrl = resolveManifestAssetUrl(backgroundId, catalogIndex);
+  const frameUrl = resolveManifestAssetUrl(frameId, catalogIndex);
+  const landscapeUrl = resolveManifestAssetUrl(landscapeConfig.landscapeId, catalogIndex);
+  const assembledAvatarLayers = assembleAvatarLayers(avatarConfig, catalogIndex);
 
   /**
    * Avatar + critter anchor offset in pixels.
@@ -367,93 +355,37 @@ export const AvatarCanvasStage: React.FC<AvatarCanvasStageProps> = ({
         {/* ── Layer 1: Background ── */}
         <Layer name="background" clearBeforeDraw={true}>
           <AssetImageLayer
-            assetUrl={bgItem?.assetUrl}
+            assetUrl={bgUrl}
             fallbackType="background"
             theme={state.backgroundTheme}
             size={canvasSize}
+            crop={resolveSpriteCrop(bgItem)}
           />
         </Layer>
 
         {/* ── Layer 2: Landscape / Isometric Terrain ── */}
         <Layer name="landscape" clearBeforeDraw={true}>
           <AssetImageLayer
-            assetUrl={landscapeItem?.assetUrl}
+            assetUrl={landscapeUrl}
             fallbackType="landscape"
             size={canvasSize}
+            crop={resolveSpriteCrop(landscapeItem)}
           />
         </Layer>
 
-        {/* ── Layer 3: Ordered Modular Avatar (Kenney Character Specification) ── */}
+        {/* ── Layer 3: Ordered Modular Avatar (@digitalcanopy/assets Assembler) ── */}
         <Layer name="avatar" clearBeforeDraw={true}>
           <Group x={anchorOffsetPx.x} y={anchorOffsetPx.y}>
-            {/* 1. Base Body silhouette — clean vector fallback, tinted via Konva RGBA filter */}
-            <AssetImageLayer
-              assetUrl={silhouetteItem?.assetUrl}
-              fallbackType="silhouette"
-              size={canvasSize}
-              tintColor={avatarConfig.tintColor}
-            />
-
-            {/* 2. Eyes overlay */}
-            {eyesItem && (
+            {assembledAvatarLayers.map((layer) => (
               <AssetImageLayer
-                assetUrl={eyesItem.assetUrl}
-                fallbackType="none"
+                key={layer.slot}
+                assetUrl={layer.assetUrl}
+                fallbackType={layer.slot === 'silhouetteId' ? 'silhouette' : 'none'}
                 size={canvasSize}
+                tintColor={layer.tintColor}
+                crop={layer.crop}
               />
-            )}
-
-            {/* 3. Mouth overlay */}
-            {mouthItem && (
-              <AssetImageLayer
-                assetUrl={mouthItem.assetUrl}
-                fallbackType="none"
-                size={canvasSize}
-              />
-            )}
-
-            {/* 4. Hair overlay */}
-            {hairItem && (
-              <AssetImageLayer
-                assetUrl={hairItem.assetUrl}
-                fallbackType="none"
-                size={canvasSize}
-              />
-            )}
-
-            {/* 5. Garments / Outfit overlay */}
-            {clothingItem && (
-              <AssetImageLayer
-                assetUrl={clothingItem.assetUrl}
-                fallbackType="none"
-                size={canvasSize}
-              />
-            )}
-
-            {/* 6. Hat / Glasses / Accessories */}
-            {hatItem && (
-              <AssetImageLayer
-                assetUrl={hatItem.assetUrl}
-                fallbackType="none"
-                size={canvasSize}
-              />
-            )}
-            {accessoryItem && (
-              <AssetImageLayer
-                assetUrl={accessoryItem.assetUrl}
-                fallbackType="none"
-                size={canvasSize}
-              />
-            )}
-
-            {/* Hand-rig overlay */}
-            {handRigItem && (
-              <AssetImageLayer
-                assetUrl={handRigItem.assetUrl}
-                fallbackType="none"
-                size={canvasSize}
-              />
-            )}
+            ))}
           </Group>
         </Layer>
 
@@ -469,9 +401,10 @@ export const AvatarCanvasStage: React.FC<AvatarCanvasStageProps> = ({
         {/* ── Layer 5: Glassmorphic Frame HUD overlay ── */}
         <Layer name="frame-hud" clearBeforeDraw={true}>
           <AssetImageLayer
-            assetUrl={frameItem?.assetUrl}
+            assetUrl={frameUrl}
             fallbackType="frame"
             size={canvasSize}
+            crop={resolveSpriteCrop(frameItem)}
             opacity={0.9}
           />
         </Layer>

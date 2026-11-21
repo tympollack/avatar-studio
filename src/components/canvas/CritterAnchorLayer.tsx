@@ -19,6 +19,7 @@ import type { CritterConfig, CosmeticItem } from '../../types/avatar';
 import type { NormalizedCoord } from '../../utils/coordinateMath';
 import { resolvePerchPixel, clampNormalized, VIRTUAL_CANVAS_SIZE } from '../../utils/coordinateMath';
 import { getCachedImage, loadImage } from '../../utils/imageCache';
+import { resolveManifestAssetUrl, resolveSpriteCrop } from '../../utils/assetManifest';
 
 // ──────────────────────────────────────────────
 // Constants
@@ -93,7 +94,9 @@ const AnimatedCritter: React.FC<AnimatedCritterProps> = ({
   perchCollisionOffset = 0,
 }) => {
   const item = catalogIndex[critter.critterId];
-  const img = useCritterImage(item?.assetUrl);
+  const assetUrl = resolveManifestAssetUrl(critter.critterId, catalogIndex);
+  const img = useCritterImage(assetUrl);
+  const crop = resolveSpriteCrop(item);
   const [bobY, setBobY] = useState(0);
   const rafRef = useRef<number>(0);
 
@@ -125,10 +128,11 @@ const AnimatedCritter: React.FC<AnimatedCritterProps> = ({
   return (
     <Group x={pixel.x - critterSize / 2 + collisionShiftX} y={pixel.y - critterSize / 2 + bobY}>
       <KonvaImage
-        name={item?.assetUrl ? `asset-image:${item.assetUrl}` : 'asset-image'}
+        name={assetUrl ? `asset-image:${assetUrl}` : 'asset-image'}
         image={img}
         width={critterSize}
         height={critterSize}
+        crop={crop}
       />
     </Group>
   );
